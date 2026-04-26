@@ -36,18 +36,26 @@ async function startRecording() {
 
     try {
         // 3. 麦克风连接成功，开始录制
+        
+        // 👇👇👇 就是这里！你丢失的核心代码，用来初始化录音机和装载音频数据！
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+        // 👆👆👆 丢失代码结束
         
         mediaRecorder.onstop = () => {
             const reader = new FileReader();
+            const finalDuration = recordSeconds;
+            
+            // 🌟 核心：在录音停止的一瞬间，生成当前的北京时间字符串
+            const now = new Date();
+            const recordTime = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日${now.getHours()}点${String(now.getMinutes()).padStart(2, '0')}分`;
+            
             reader.onload = function(e) {
-                document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', e.target.result));
+                // 🌟 将 recordTime 传给生成器
+                document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', e.target.result, finalDuration, recordTime));
             };
             reader.readAsDataURL(new Blob(audioChunks, { type: 'audio/webm' }));
-            
-            // 💡 录音结束后，彻底关闭麦克风硬件，消除手机屏幕顶部的“绿点”隐私提示
             stream.getTracks().forEach(track => track.stop());
         };
 
@@ -55,7 +63,7 @@ async function startRecording() {
         document.getElementById('recordingModal').classList.remove('hidden'); 
         recordSeconds = 0; 
         document.getElementById('recordTimeDisplay').innerText = "00:00";
-        mediaRecorder.start();
+        mediaRecorder.start(); // 现在它有真实的音频流了，不会再报错了！
         
         // 5. 计时器
         recordTimer = setInterval(() => {
@@ -498,14 +506,15 @@ function editEntry(id) {
 }
 
 function deleteEntry(id) {
-    if (confirm("确定要删除这条手账吗？无法恢复哦。")) {
+    if (confirm("确定要删除这条记录吗？无法恢复哦。")) {
         db[state.year][state.month] = db[state.year][state.month].filter(x => x.id !== id);
         saveToLocal();
         render();
     }
 }
 
-function createBlockHTML(type, url = '') {
+// 注意参数里加上了 duration = 0
+function createBlockHTML(type, url = '', duration = 0, timestamp = '') {
     let inner = '';
     if (type === 'text') {
         inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-400" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount();"></textarea>`;
@@ -513,8 +522,57 @@ function createBlockHTML(type, url = '') {
         inner = `<img src="${url}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mt-2">`;
     } else if (type === 'video') {
         inner = `<div class="py-2"><video controls class="w-full rounded-lg shadow-sm border border-stone-200 mt-2" src="${url}"></video></div>`;
-    } else if (type === 'voice') {
-        inner = `<div class="bg-cyan-50 border border-cyan-100 p-3 rounded-2xl w-full shadow-sm my-2"><audio controls class="w-full outline-none" src="${url}"></audio></div>`;
+   } else if (type === 'voice') {
+        const pad = n => String(Math.floor(n)).padStart(2, '0');
+        const timeStr = duration > 0 ? `0:${pad(duration)}` : '0:00';
+        
+        // 🌟 修复了缺失的反引号，并完美融合了你的所有 UI 和时间数据
+        inner = `
+        <div class="voice-container bg-cyan-50 border border-cyan-100 rounded-xl px-3 py-2 w-[280px] max-w-[90vw] shadow-sm flex items-center gap-2 no-print" 
+             data-duration="${duration}" 
+             data-recorded-at="${timestamp}">
+            
+            <button onclick="toggleVoice(this)" class="w-6 h-6 flex-shrink-0 bg-cyan-600 rounded-full flex items-center justify-center shadow-md active:scale-95 transition-transform">
+                <svg class="svg-play w-3 h-3 text-white ml-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path fill-rule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clip-rule="evenodd" />
+                </svg>
+                <svg class="svg-pause w-3 h-3 text-white hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path fill-rule="evenodd" d="M6.75 5.25a.75.75 0 01.75-.75H9a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V5.25zm7.5 0a.75.75 0 01.75-.75h1.5a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75h-1.5a.75.75 0 01-.75-.75V5.25z" clip-rule="evenodd" />
+                </svg>
+            </button>
+            
+            <span class="time-display text-sm text-cyan-700 font-mono font-bold min-w-[36px] text-center">${timeStr}</span>
+            
+            <div class="flex-1 h-[3px] bg-cyan-200 rounded-full relative overflow-hidden">
+                <div class="progress-bar absolute left-0 top-0 h-full bg-cyan-600 w-0 pointer-events-none"></div>
+            </div>
+
+            <button onclick="toggleMute(this)" class="flex-shrink-0 active:scale-90 transition-transform px-1">
+                <svg class="svg-on w-4 h-4 text-cyan-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
+                    <path d="M15.932 7.757a.75.75 0 011.061 0 4.5 4.5 0 010 6.364.75.75 0 01-1.06-1.06 3 3 0 000-4.243.75.75 0 010-1.061z" />
+                </svg>
+                <svg class="svg-off w-4 h-4 text-cyan-400 hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 101.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 10-1.06-1.06l-1.72 1.72-1.72-1.72z" />
+                </svg>
+            </button>
+            
+            <div class="relative flex items-center">
+                <button onclick="toggleMenu(this)" class="flex-shrink-0 active:scale-90 transition-transform px-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="-5 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 text-cyan-600">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+                    </svg>
+                </button>
+
+                <div class="voice-menu hidden absolute right-0 bottom-8 bg-white border border-stone-100 shadow-xl rounded-lg w-28 text-sm overflow-hidden z-50">
+                    <button onclick="downloadAudio(this)" class="w-full text-left px-4 py-2 hover:bg-stone-50 text-stone-600 flex items-center gap-2 font-bold">
+                        <span class="text-lg"></span> 下载音频
+                    </button>
+                </div>
+            </div>
+            
+            <audio class="hidden voice-player" src="${url}" ontimeupdate="updateVoiceProgress(this)" onended="resetVoiceProgress(this)"></audio>
+        </div>`;
     }
 
     return `
@@ -555,4 +613,162 @@ function moveBlock(button, direction) {
     }
 }
 
+// 1. 播放/暂停控制 (升级为控制 SVG 显示/隐藏)
+function toggleVoice(btn) {
+    const container = btn.closest('.voice-container');
+    const audio = container.querySelector('.voice-player');
+    const svgPlay = btn.querySelector('.svg-play');
+    const svgPause = btn.querySelector('.svg-pause');
+
+    if (audio.paused) {
+        document.querySelectorAll('.voice-player').forEach(a => {
+            if(!a.paused && a !== audio) {
+                a.pause();
+                resetVoiceProgress(a); 
+            }
+        });
+        audio.play();
+        // 播放时：藏起播放键，露出暂停键
+        svgPlay.classList.add('hidden');
+        svgPause.classList.remove('hidden');
+    } else {
+        audio.pause();
+        // 暂停时：藏起暂停键，露出播放键
+        svgPlay.classList.remove('hidden');
+        svgPause.classList.add('hidden');
+    }
+}
+
+// 2. 🌟 进度条动态更新引擎 (每秒触发几十次)
+function updateVoiceProgress(audio) {
+    const container = audio.closest('.voice-container');
+    const timeDisplay = container.querySelector('.time-display');
+    const progressBar = container.querySelector('.progress-bar');
+    
+    // 计算当前播放了百分之几
+    const currentSeconds = Math.floor(audio.currentTime);
+    const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1);
+    const percent = (audio.currentTime / totalSeconds) * 100;
+    
+    // 推送给 UI：拉长进度条，改变数字
+    progressBar.style.width = `${percent}%`;
+    const pad = n => String(n).padStart(2, '0');
+    timeDisplay.innerText = `0:${pad(currentSeconds)}`;
+}
+
+// 3. 播放结束/被打断时的复位引擎 (升级为还原 SVG 状态)
+function resetVoiceProgress(audio) {
+    const container = audio.closest('.voice-container');
+    const svgPlay = container.querySelector('.svg-play');
+    const svgPause = container.querySelector('.svg-pause');
+    const timeDisplay = container.querySelector('.time-display');
+    const progressBar = container.querySelector('.progress-bar');
+    const duration = container.getAttribute('data-duration');
+    
+    audio.currentTime = 0; 
+    progressBar.style.width = '0%'; 
+    
+    // 复位图标：露出播放键
+    if(svgPlay && svgPause) {
+        svgPlay.classList.remove('hidden');
+        svgPause.classList.add('hidden');
+    }
+    
+    const pad = n => String(n).padStart(2, '0');
+    timeDisplay.innerText = duration > 0 ? `0:${pad(duration)}` : '0:00';
+}
+
+// 4. 🔈 静音/取消静音切换
+function toggleMute(btn) {
+    const container = btn.closest('.voice-container');
+    const audio = container.querySelector('.voice-player');
+    const svgOn = btn.querySelector('.svg-on');
+    const svgOff = btn.querySelector('.svg-off');
+
+    // 切换静音状态
+    audio.muted = !audio.muted;
+    
+    // 切换图标显示
+    if (audio.muted) {
+        svgOn.classList.add('hidden');
+        svgOff.classList.remove('hidden');
+    } else {
+        svgOn.classList.remove('hidden');
+        svgOff.classList.add('hidden');
+    }
+}
+
+// 🌟 显示/隐藏三个点的菜单
+function toggleMenu(btn) {
+    const menu = btn.nextElementSibling;
+    // 如果页面上有好几段录音，点开这个菜单时，自动关掉其他打开的菜单
+    document.querySelectorAll('.voice-menu').forEach(m => {
+        if (m !== menu) m.classList.add('hidden');
+    });
+    // 切换当前菜单的显示/隐藏状态
+    menu.classList.toggle('hidden');
+}
+
+// 🌟 下载音频引擎 (召唤原生分享/保存弹窗版)
+async function downloadAudio(btn) {
+    const container = btn.closest('.voice-container');
+    const audio = container.querySelector('.voice-player');
+    const menu = btn.closest('.voice-menu');
+
+    menu.classList.add('hidden');
+
+    // 🌟 获取我们之前存好的“录制时间”
+    const recordedTime = container.getAttribute('data-recorded-at') || '未知时间';
+    const fileName = `回响APP_语音_${Date.now()}.webm`;
+
+    try {
+        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+            const Filesystem = Capacitor.Plugins.Filesystem;
+            const Share = Capacitor.Plugins.Share;
+
+            const base64Data = audio.src.split(',')[1];
+            await Filesystem.writeFile({
+                path: fileName,
+                data: base64Data,
+                directory: 'CACHE'
+            });
+
+            const uriResult = await Filesystem.getUri({
+                path: fileName,
+                directory: 'CACHE'
+            });
+
+            // 🌟 4. 召唤分享面板，带上精准的时间描述
+            await Share.share({
+                title: '回响语音分享',
+                text: `这是我在【回响】录制的一段珍贵语音，时间是${recordedTime}。`,
+                url: uriResult.uri,
+                dialogTitle: '保存或分享语音'
+            });
+
+        } else {
+            // 电脑端逻辑
+            const a = document.createElement('a');
+            a.href = audio.src;
+            a.download = fileName;
+            a.click();
+        }
+    } catch (error) {
+        console.error(error);
+        alert("❌ 操作失败: " + error.message);
+    }
+}
 render();
+
+// 🌟 全局点击监听：点页面任何空白处，关闭所有弹出的下载菜单
+document.addEventListener('click', function(event) {
+    // 判断当前点击的东西，是不是那个“三个点”按钮，或者它里面的图标
+    const isClickOnMenuBtn = event.target.closest('button[onclick="toggleMenu(this)"]');
+    
+    // 如果点的【不是】菜单按钮，就把所有打开的菜单关掉
+    if (!isClickOnMenuBtn) {
+        document.querySelectorAll('.voice-menu').forEach(menu => {
+            menu.classList.add('hidden');
+        });
+    }
+});
