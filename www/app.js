@@ -7,6 +7,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let recordTimer = null;
 let recordSeconds = 0;
+let isRecordingCancelled = false;
 
 // 🌟 终极保存引擎：移至内部安全沙盒，绝对不报错！
 async function saveToLocal() {
@@ -35,6 +36,49 @@ async function saveToLocal() {
         alert("⚠️ 数据库写入失败！\n真实原因: " + e.message);
     }
 }
+
+// 🌟 V2.1 终极媒体落盘引擎：拦截 Base64，写入本地沙盒
+async function saveMediaToDisk(base64Data, type) {
+    // 网页端调试时，降级直接返回 base64，不影响你在电脑浏览器上测试
+    if (!window.Capacitor || !window.Capacitor.isNativePlatform()) {
+        return base64Data; 
+    }
+
+    const Filesystem = Capacitor.Plugins.Filesystem;
+    const timestamp = Date.now();
+    let folder = '';
+    let ext = '';
+
+    // 自动路由到你的专属“别墅”房间
+    if (type === 'image') { folder = 'Images'; ext = 'jpg'; } 
+    else if (type === 'video') { folder = 'Videos'; ext = 'mp4'; } 
+    else if (type === 'voice') { folder = 'Audios'; ext = 'webm'; }
+
+    const fileName = `${folder.substring(0, 3).toLowerCase()}_${timestamp}.${ext}`;
+    const path = `EchoAppData/${folder}/${fileName}`;
+
+    // 关键操作：前端读出来的 base64 长这样 "data:image/jpeg;base64,/9j/4AA..."
+    // 写入原生磁盘时，必须把前面的描述头劈掉，只要后面的纯数据
+    const base64Content = base64Data.split(',')[1];
+
+    try {
+        // 物理落盘
+        const result = await Filesystem.writeFile({
+            path: path,
+            data: base64Content,
+            directory: 'DATA'
+        });
+        
+        // 🌟 终极魔法：手机底层的 file:// 路径 WebView 是不准读的（跨域安全限制）
+        // 这里调用 Capacitor 的底层 API，把它转换成 http://localhost/_capacitor_file_/ 这种合法路径
+        return Capacitor.convertFileSrc(result.uri);
+        
+    } catch (e) {
+        console.error("文件落盘失败，已降级回 Base64", e);
+        return base64Data; // 即使失败了，兜底用 base64，保证数据不丢
+    }
+}
+
 
 // 🌟录音函数：解决安卓授权时差 Bug
 async function startRecording() {
@@ -75,9 +119,15 @@ async function startRecording() {
             const now = new Date();
             const recordTime = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日${now.getHours()}点${String(now.getMinutes()).padStart(2, '0')}分`;
             
-            reader.onload = function(e) {
-                // 🌟 将 recordTime 传给生成器
-                document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', e.target.result, finalDuration, recordTime));
+            // 🌟 同样加上 async
+            reader.onload = async function(e) {
+                if (!isRecordingCancelled) {
+                    // 1. 拦截录音 Base64 落盘
+                    const localUrl = await saveMediaToDisk(e.target.result, 'voice');
+                    // 2. 气泡里绑定的 src 现在变成了本地清爽路径
+                    document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', localUrl, finalDuration, recordTime));
+                }
+                isRecordingCancelled = false; 
             };
             reader.readAsDataURL(new Blob(audioChunks, { type: 'audio/webm' }));
             stream.getTracks().forEach(track => track.stop());
@@ -107,6 +157,17 @@ function stopRecording() {
         document.getElementById('recordingModal').classList.add('hidden');
     }
 }
+
+function cancelRecording() {
+    // 举起拦截牌
+    isRecordingCancelled = true; 
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop(); 
+        clearInterval(recordTimer);
+        document.getElementById('recordingModal').classList.add('hidden');
+    }
+}
+
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
@@ -206,7 +267,7 @@ function render() {
         if (!years.includes(String(currentYear))) years.unshift(String(currentYear));
 
         let booksHtml = years.map(y => `
-            <div onclick="goToYear(${y})" class="book-spine ${y == currentYear ? 'bg-amber-700 border-amber-900' : 'bg-emerald-800 border-emerald-950'} h-64 rounded-r-lg shadow-xl border-l-8 p-4 text-white flex flex-col justify-between hover:-translate-y-2 transition-transform">
+            <div onclick="goToYear(${y})" class="book-spine ${y == currentYear ? 'bg-amber-700 border-amber-900' : 'bg-emerald-800 border-emerald-950'} h-48 rounded-r-lg shadow-xl border-l-8 p-4 text-white flex flex-col justify-between hover:-translate-y-2 transition-transform">
                 <h2 class="text-3xl font-serif font-bold">${y}</h2>
                 <p class="text-xs opacity-70">${y == currentYear ? '手账本正在使用中' : '已封存'}</p>
             </div>`).join('');
@@ -313,8 +374,8 @@ function render() {
                         </button>
                         <h1 class="text-xl font-serif font-bold text-stone-700">${state.month}月${state.day}日</h1>
                     </div>
-                    <button onclick="exportToPDF()" class="flex items-center gap-2 text-sm bg-cyan-600 text-white px-4 py-2 rounded-full shadow-md hover:bg-cyan-500 font-bold tracking-wider">
-                        <span>📥</span> 导出PDF
+                    <button onclick="exportToPDF()" class="flex items-center gap-2 text-sm bg-cyan-600 text-white px-3 py-2 rounded-full shadow-md hover:bg-cyan-500 font-bold tracking-wider">
+                        <span></span> 导出PDF
                     </button>
                 </div>
                 <h1 class="hidden print:block text-3xl font-serif font-bold text-center mb-10 border-b-2 border-stone-800 pb-4 mx-4 mt-8">${state.year}年 ${state.month}月${state.day}日 手账归档</h1>
@@ -335,10 +396,11 @@ function render() {
                 <div id="journal-canvas" class="flex-1 p-6 pb-40 overflow-y-auto space-y-2" onkeyup="calculateWordCount()"></div>
 
                 <div class="absolute bottom-[68px] left-0 w-full bg-white/95 backdrop-blur-sm border-t border-stone-200 p-2.5 flex justify-between items-center text-[11px] text-stone-500 z-10 shadow-[0_-5px_15px_rgba(0,0,0,0.02)] no-print">
-                    <div class="relative flex items-center justify-center gap-1 cursor-pointer hover:text-cyan-600 transition-colors w-1/4">
-                        <span>🕒</span>
-                        <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value)" class="bg-transparent outline-none text-stone-400 font-mono w-full truncate text-center">
-                    </div>
+                <div class="relative flex items-center justify-center gap-1 cursor-pointer hover:text-cyan-600 transition-colors w-1/4">
+                    <span>🕒</span>
+                    <span class="text-stone-400 truncate">时间</span>
+                    <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value)" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
+                </div>
                     <div class="w-px h-4 bg-stone-200 flex-shrink-0"></div>
                     <div onclick="openLocationModal()" class="flex items-center justify-center cursor-pointer hover:text-cyan-600 transition-colors w-1/4 px-1">
                         <div class="flex items-center gap-1 truncate">
@@ -407,21 +469,21 @@ function render() {
                 <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v19.0.0 (Pro)</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v2.0.0 </p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">更新日期</span>
-                        <span class="text-stone-400 text-sm font-mono">2026年4月25日</span>
+                        <span class="text-stone-400 text-sm font-mono">2026年4月26日</span>
                     </div>
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">核心开发者</span>
-                        <span class="text-stone-400 text-sm">Gemini CTO</span>
+                        <span class="text-stone-400 text-sm">TDYSN</span>
                     </div>
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">数据存储</span>
-                        <span class="text-stone-400 text-sm">本地浏览器缓存</span>
+                        <span class="text-stone-400 text-sm">Echoappdata文件</span>
                     </div>
                 </div>
                 
@@ -567,31 +629,33 @@ function createBlockHTML(type, url = '', duration = 0, timestamp = '') {
             
             <span class="time-display text-sm text-cyan-700 font-mono font-bold min-w-[36px] text-center">${timeStr}</span>
             
-            <div class="flex-1 h-[3px] bg-cyan-200 rounded-full relative overflow-hidden">
+           <div class="flex-1 h-[3px] bg-cyan-200 rounded-full relative overflow-hidden">
                 <div class="progress-bar absolute left-0 top-0 h-full bg-cyan-600 w-0 pointer-events-none"></div>
             </div>
 
-            <button onclick="toggleMute(this)" class="flex-shrink-0 active:scale-90 transition-transform px-1">
-                <svg class="svg-on w-4 h-4 text-cyan-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
-                    <path d="M15.932 7.757a.75.75 0 011.061 0 4.5 4.5 0 010 6.364.75.75 0 01-1.06-1.06 3 3 0 000-4.243.75.75 0 010-1.061z" />
-                </svg>
-                <svg class="svg-off w-4 h-4 text-cyan-400 hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 101.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 10-1.06-1.06l-1.72 1.72-1.72-1.72z" />
-                </svg>
-            </button>
-            
-            <div class="relative flex items-center">
-                <button onclick="toggleMenu(this)" class="flex-shrink-0 active:scale-90 transition-transform px-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="-5 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 text-cyan-600">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+            <div class="flex items-center gap-0.5 ml-1">
+                <button onclick="toggleMute(this)" class="flex-shrink-0 active:scale-90 transition-transform">
+                    <svg class="svg-on w-4 h-4 text-cyan-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
+                        <path d="M15.932 7.757a.75.75 0 011.061 0 4.5 4.5 0 010 6.364.75.75 0 01-1.06-1.06 3 3 0 000-4.243.75.75 0 010-1.061z" />
+                    </svg>
+                    <svg class="svg-off w-4 h-4 text-cyan-400 hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 101.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 10-1.06-1.06l-1.72 1.72-1.72-1.72z" />
                     </svg>
                 </button>
-
-                <div class="voice-menu hidden absolute right-0 bottom-8 bg-white border border-stone-100 shadow-xl rounded-lg w-28 text-sm overflow-hidden z-50">
-                    <button onclick="downloadAudio(this)" class="w-full text-left px-4 py-2 hover:bg-stone-50 text-stone-600 flex items-center gap-2 font-bold">
-                        <span class="text-lg"></span> 下载音频
+                
+                <div class="relative flex items-center">
+                    <button onclick="toggleMenu(this)" class="flex-shrink-0 active:scale-90 transition-transform">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="-5 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 text-cyan-600">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
+                        </svg>
                     </button>
+
+                    <div class="voice-menu hidden absolute right-0 bottom-8 bg-white border border-stone-100 shadow-xl rounded-lg w-28 text-sm overflow-hidden z-50">
+                        <button onclick="downloadAudio(this)" class="w-full text-left px-4 py-2 hover:bg-stone-50 text-stone-600 flex items-center gap-2 font-bold">
+                            <span class="text-lg"></span> 下载音频
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -616,13 +680,17 @@ function addBlock(type, event) {
     
     if ((type === 'image' || type === 'video') && event.target.files[0]) {
         const reader = new FileReader();
-        reader.onload = function(e) {
-            canvas.insertAdjacentHTML('beforeend', createBlockHTML(type, e.target.result));
+        // 🌟 注意：这里加上了 async，因为要等待落盘完成
+        reader.onload = async function(e) {
+            // 1. 拦截 Base64，执行异步落盘，拿回本地物理虚拟路径
+            const localUrl = await saveMediaToDisk(e.target.result, type);
+            // 2. 用安全轻量的 localUrl 渲染到手账里，不再是冗长的 Base64！
+            canvas.insertAdjacentHTML('beforeend', createBlockHTML(type, localUrl));
             canvas.scrollTop = canvas.scrollHeight;
         };
         reader.readAsDataURL(event.target.files[0]);
         event.target.value = '';
-    } else {
+    }else {
         canvas.insertAdjacentHTML('beforeend', createBlockHTML(type));
         canvas.scrollTop = canvas.scrollHeight;
     }
@@ -788,18 +856,15 @@ async function initFileSystem() {
         const Filesystem = Capacitor.Plugins.Filesystem;
         const dirs = ['EchoAppData', 'EchoAppData/Images', 'EchoAppData/Videos', 'EchoAppData/Audios'];
 
-        // 1. 在安全的 DATA 沙盒里建物理文件夹
-        for (let dir of dirs) {
+        // 1. 在安全的 DATA 沙盒里建物理文件夹 (并行加速版)
+        await Promise.all(dirs.map(async (dir) => {
             try {
                 await Filesystem.stat({ path: dir, directory: 'DATA' });
             } catch (e) {
-                try {
-                    await Filesystem.mkdir({ path: dir, directory: 'DATA', recursive: true });
-                } catch (err) {
-                    console.log("沙盒建房小错误:", err);
-                }
+                try { await Filesystem.mkdir({ path: dir, directory: 'DATA', recursive: true }); } 
+                catch (err) {}
             }
-        }
+        }));
 
         // 2. 读取或创建核心账本
         try {
@@ -812,7 +877,8 @@ async function initFileSystem() {
             await saveToLocal(); 
             
             // 🌟 终极胜利的宣告！
-            alert("✅ V2.0 内部数据沙盒建房成功！数据已受系统最高级别保护！");
+            alert("欢迎来到，时间的回响");
+            //alert("V2.0 内部数据沙盒建房成功！数据已受系统最高级别保护！");
         }
 
     } else {
@@ -827,6 +893,37 @@ async function initFileSystem() {
 
 // 启动引擎！
 initFileSystem();
+
+
+// 🌟 原生物理返回键拦截引擎
+async function initHardwareBackButton() {
+    if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+        const App = Capacitor.Plugins.App;
+        
+        App.addListener('backButton', () => {
+            // 智能判断当前页面层级，执行对应的返回操作
+            if (state.level === 'home') {
+                App.exitApp(); // 只有在主页，才真正退出 APP
+            } else if (state.level === 'editor') {
+                cancelEdit(); // 在写手账时，相当于点左上角的取消
+            } else if (['year', 'gallery', 'roam', 'map', 'settings'].includes(state.level)) {
+                goBack('home'); // 这几个一级模块，都退回主页
+            } else if (state.level === 'month') {
+                goBack('year');
+            } else if (state.level === 'day') {
+                goBack('month');
+            } else if (state.level === 'locationDetails') {
+                // 如果在地图的位置详情页，退回地图大页
+                state.level = 'map'; 
+                renderMapView();
+            }
+        });
+    }
+}
+
+// 启动物理键监听
+initHardwareBackButton();
+
 
 // 🌟 全局点击监听：点页面任何空白处，关闭所有弹出的下载菜单
 document.addEventListener('click', function(event) {

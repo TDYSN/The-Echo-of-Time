@@ -98,7 +98,10 @@
             <div class="w-16 h-16 rounded-full bg-rose-100 flex items-center justify-center animate-pulse"><div class="w-8 h-8 rounded-full bg-rose-500"></div></div>
             <h3 class="text-lg font-bold text-stone-700">正在录音...</h3>
             <div class="text-3xl font-mono text-rose-500 font-bold" id="recordTimeDisplay">00:00</div>
-            <button onclick="stopRecording()" class="mt-4 px-6 py-2 bg-stone-800 text-white rounded-full font-bold hover:bg-stone-700 active:scale-95">完成录制</button>
+            <div class="mt-4 flex flex-col items-center gap-3 w-full">
+            <button onclick="stopRecording()" class="w-full py-2.5 bg-stone-800 text-white rounded-full font-bold hover:bg-stone-700 active:scale-95 transition-transform">完成录制</button>
+            <button onclick="cancelRecording()" class="text-xs text-stone-400 hover:text-stone-600 font-bold active:scale-95">取消录音</button>
+        </div>
         </div>
     </div>
 
