@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>往事书架 - 专业工程版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-stone-100 min-h-screen text-stone-800">
+
+    <div id="loadingOverlay" class="hidden fixed inset-0 bg-white/80 backdrop-blur-sm z-[70] flex flex-col items-center justify-center">
+        <div class="text-4xl animate-bounce mb-4">🖨️</div>
+        <p class="text-stone-600 font-bold tracking-widest">正在生成精美 PDF，请稍候...</p>
+    </div>
+
+    <div id="app" class="max-w-2xl mx-auto h-screen relative shadow-2xl bg-white overflow-hidden overflow-y-auto"></div>
+
+    <div id="sidebarOverlay" class="hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-50 transition-opacity no-print" onclick="toggleSidebar()"></div>
+    <div id="sidebar" class="fixed top-0 left-0 w-72 h-full bg-white shadow-2xl z-50 transform -translate-x-full transition-transform duration-300 no-print flex flex-col">
+        <div class="h-40 bg-stone-50 flex items-center justify-center border-b border-stone-100 overflow-hidden relative">
+            <div class="absolute w-32 h-32 bg-cyan-50 rounded-full blur-2xl -top-10 -right-10"></div>
+            <div id="drawerHeaderIcon" class="text-6xl animate-float relative z-10 drop-shadow-md">🎈</div>
+        </div>
+        <div class="flex-1 overflow-y-auto py-4 px-6 space-y-6 text-stone-600 font-medium">
+            <h3 class="text-xs text-stone-400 mb-2">账号信息</h3>
+            <div class="flex items-center justify-between cursor-pointer hover:text-cyan-600 transition-colors">
+                <div class="flex items-center gap-4"><span class="text-xl text-stone-400">⭕</span> 统计</div>
+                <span class="text-xs text-stone-400 font-normal tracking-wider">记录 <span id="statDays" class="font-bold text-stone-600">0</span> 天</span>
+            </div>
+            <div id="btnGallery" onclick="alert('图库模块还未接入，请稍后补全 gallery.js')" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors">
+                <span class="text-xl text-stone-400">📷</span> 图库
+            </div>
+            <div id="btnRoam" onclick="alert('漫游模块还未接入，请稍后补全 roam.js')" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors">
+                <span class="text-xl text-stone-400">🧭</span> 漫游
+            </div>
+            <div onclick="goToMap()" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors">
+                <span class="text-xl text-stone-400">🗺️</span> 地图
+            </div>
+            <div onclick="goToSettings()" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors mt-8 pt-6 border-t border-stone-100">
+                <span class="text-xl text-stone-400">⚙️</span> 设置
+            </div>
+        </div>
+    </div>
+
+    <div id="weatherModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 transition-opacity no-print">
+        <div class="bg-white w-full max-w-sm rounded-t-2xl sm:rounded-2xl p-6 shadow-2xl transform transition-transform">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-lg font-bold text-stone-700">当时的天气是？</h3>
+                <button onclick="closeWeatherModal()" class="text-stone-400 font-bold hover:text-stone-600 text-xl">✕</button>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+                <button onclick="selectWeather('☀️ 晴天')" class="flex flex-col items-center gap-1 p-3 border border-stone-200 rounded-xl hover:bg-cyan-50 transition-colors"><span class="text-2xl">☀️</span><span class="text-xs text-stone-500">晴天</span></button>
+                <button onclick="selectWeather('⛅ 多云')" class="flex flex-col items-center gap-1 p-3 border border-stone-200 rounded-xl hover:bg-cyan-50 transition-colors"><span class="text-2xl">⛅</span><span class="text-xs text-stone-500">多云</span></button>
+                <button onclick="selectWeather('☁️ 阴天')" class="flex flex-col items-center gap-1 p-3 border border-stone-200 rounded-xl hover:bg-cyan-50 transition-colors"><span class="text-2xl">☁️</span><span class="text-xs text-stone-500">阴天</span></button>
+                <button onclick="selectWeather('🌧️ 雨天')" class="flex flex-col items-center gap-1 p-3 border border-stone-200 rounded-xl hover:bg-cyan-50 transition-colors"><span class="text-2xl">🌧️</span><span class="text-xs text-stone-500">雨天</span></button>
+                <button onclick="selectWeather('❄️ 雪天')" class="flex flex-col items-center gap-1 p-3 border border-stone-200 rounded-xl hover:bg-cyan-50 transition-colors"><span class="text-2xl">❄️</span><span class="text-xs text-stone-500">雪天</span></button>
+                <button onclick="selectWeather('💨 大风')" class="flex flex-col items-center gap-1 p-3 border border-stone-200 rounded-xl hover:bg-cyan-50 transition-colors"><span class="text-2xl">💨</span><span class="text-xs text-stone-500">大风</span></button>
+            </div>
+            <button onclick="selectWeather('')" class="w-full mt-6 py-3 bg-stone-100 text-stone-500 rounded-xl font-bold hover:bg-stone-200 transition-colors text-sm">清除天气 / 无</button>
+        </div>
+    </div>
+
+    <div id="locationModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 transition-opacity no-print">
+        <div class="bg-white w-full max-w-sm rounded-t-2xl sm:rounded-2xl p-6 shadow-2xl transform transition-transform">
+            <div class="flex justify-between items-center mb-6">
+                <h3 id="locationModalTitle" class="text-lg font-bold text-stone-700">选择定位方式</h3>
+                <button onclick="closeLocationModal()" class="text-stone-400 font-bold hover:text-stone-600 text-xl">✕</button>
+            </div>
+            <div class="space-y-4">
+                <button onclick="getLocationFromDevice()" class="w-full flex items-center gap-4 p-4 border border-stone-200 rounded-2xl hover:bg-cyan-50 transition-colors group">
+                    <div class="w-10 h-10 rounded-full bg-cyan-100 flex items-center justify-center text-xl group-hover:bg-cyan-200 transition-colors">📍</div>
+                    <div class="flex flex-col items-start">
+                        <span id="geoBtnText" class="text-sm font-bold text-stone-700">获取当前位置</span>
+                        <span class="text-[10px] text-stone-400">调用手机/电脑原生 GPS</span>
+                    </div>
+                </button>
+                <button onclick="alert('受限于网页端原型，地图选点功能暂未接入真实地图 SDK。未来打包成真实 APP 后可体验完整选点功能！')" class="w-full flex items-center gap-4 p-4 border border-stone-200 rounded-2xl hover:bg-emerald-50 transition-colors group">
+                    <div class="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl group-hover:bg-emerald-200 transition-colors">🗺️</div>
+                    <div class="flex flex-col items-start">
+                        <span class="text-sm font-bold text-stone-700">在地图中寻找</span>
+                        <span class="text-[10px] text-stone-400">打开大地图手动选择定位</span>
+                    </div>
+                </button>
+                <div class="flex items-center gap-2 p-2 border border-stone-200 rounded-2xl focus-within:border-cyan-500 focus-within:ring-1 focus-within:ring-cyan-500 transition-all">
+                    <span class="text-xl pl-2">✍️</span>
+                    <input type="text" id="customLocationInput" placeholder="手动输入地名..." class="flex-1 bg-transparent outline-none text-sm text-stone-700 px-2 py-2">
+                    <button onclick="setCustomLocation()" class="bg-stone-800 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-stone-700 transition-colors">确定</button>
+                </div>
+            </div>
+            <button onclick="clearLocation()" class="w-full mt-6 py-3 bg-stone-100 text-stone-500 rounded-xl font-bold hover:bg-stone-200 transition-colors text-sm">清除定位 / 无</button>
+        </div>
+    </div>
+
+    <div id="recordingModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[60] no-print">
+        <div class="bg-white p-8 rounded-3xl flex flex-col items-center gap-4 w-64 shadow-2xl">
+            <div class="w-16 h-16 rounded-full bg-rose-100 flex items-center justify-center animate-pulse"><div class="w-8 h-8 rounded-full bg-rose-500"></div></div>
+            <h3 class="text-lg font-bold text-stone-700">正在录音...</h3>
+            <div class="text-3xl font-mono text-rose-500 font-bold" id="recordTimeDisplay">00:00</div>
+            <button onclick="stopRecording()" class="mt-4 px-6 py-2 bg-stone-800 text-white rounded-full font-bold hover:bg-stone-700 active:scale-95">完成录制</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="gallery.js"></script>
+    <script src="roam.js"></script>
+    <script src="map.js"></script>
+</body>
+</html>
