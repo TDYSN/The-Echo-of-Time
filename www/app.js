@@ -8,6 +8,9 @@ let audioChunks = [];
 let recordTimer = null;
 let recordSeconds = 0;
 let isRecordingCancelled = false;
+let amap = null;
+let amapMarker = null;
+let tempSelectedLoc = ''; // 临时存储选中的地名
 
 // 🌟 终极保存引擎：移至内部安全沙盒，绝对不报错！
 async function saveToLocal() {
@@ -208,25 +211,116 @@ function exportToPDF() {
 function openLocationModal() { document.getElementById('locationModal').classList.remove('hidden'); }
 function closeLocationModal() { document.getElementById('locationModal').classList.add('hidden'); }
 
-function getLocationFromDevice() {
-    if (navigator.geolocation) {
-        const title = document.getElementById('locationModalTitle');
-        const oldTitle = title.innerText;
-        title.innerText = "获取中...";
-        navigator.geolocation.getCurrentPosition(position => {
-            const lat = position.coords.latitude.toFixed(4);
-            const lon = position.coords.longitude.toFixed(4);
-            editorMeta.location = `东经${lon} 北纬${lat}`;
+
+// 🌟 智能地名“脱水”：广东省深圳市宝安区 -> 深圳宝安
+function simplifyAddress(components) {
+    // 1. 获取城市（如果是直辖市，city 字段可能为空，则取 province）
+    let city = components.city && typeof components.city === 'string' ? components.city : components.province;
+    // 2. 获取区县或街道
+    let district = components.district || components.township || "";
+    
+    // 去掉“省”、“市”、“区”、“街道”等后缀
+    city = city.replace(/省|市/g, '');
+    district = district.replace(/区|街道|镇|乡/g, '');
+    
+    return city + district;
+}
+
+// 🌟 V3.1 防死锁安全定位引擎
+async function getLocationFromDevice() {
+    const title = document.getElementById('locationModalTitle');
+    const oldTitle = title.innerText;
+    title.innerText = "卫星连接中...";
+
+    // 🌟 加一把安全锁：如果10秒还没拿到数据，强制解锁，防止一直转圈
+    let isResolved = false;
+    const timeoutSafeLock = setTimeout(() => {
+        if (!isResolved) {
+            isResolved = true;
+            title.innerText = oldTitle;
+            closeLocationModal();
+            alert("⚠️ 定位超时（请检查网络或是否开启了手机GPS服务）");
+        }
+    }, 10000);
+
+    try {
+        let lat, lon;
+
+        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+            const Geolocation = Capacitor.Plugins.Geolocation;
+            const permission = await Geolocation.requestPermissions();
+            if (permission.location !== 'granted') {
+                clearTimeout(timeoutSafeLock); isResolved = true;
+                title.innerText = oldTitle;
+                return alert("⚠️ 你拒绝了定位权限，无法获取位置。");
+            }
+
+            let position;
+            try {
+                // 策略A：先尝试高精度定位，但只给它 4 秒钟时间
+                position = await Geolocation.getCurrentPosition({
+                    enableHighAccuracy: true,
+                    timeout: 4000,
+                    maximumAge: 30000 // 允许使用 30 秒内的缓存
+                });
+            } catch (highAccErr) {
+                console.log("高精度获取失败，降级为基站/Wi-Fi粗略定位...");
+                // 策略B：如果高精度超时或失败，立马降级为低精度（秒出）
+                position = await Geolocation.getCurrentPosition({
+                    enableHighAccuracy: false, // 关闭高精度，利用 Wi-Fi 和基站
+                    timeout: 5000,
+                    maximumAge: 300000 // 允许使用 5 分钟内的缓存
+                });
+            }
+            lat = position.coords.latitude;
+            lon = position.coords.longitude;
+        } else {
+            // Web 端降级拿坐标（🌟 补充了 timeout 参数）
+            await new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(
+                    pos => { lat = pos.coords.latitude; lon = pos.coords.longitude; resolve(); },
+                    err => reject(err),
+                    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                );
+            });
+        }
+
+        if (typeof AMap !== 'undefined') {
+            AMap.plugin('AMap.Geocoder', function() {
+                var geocoder = new AMap.Geocoder({ city: "010" });
+                geocoder.getAddress([lon, lat], function(status, result) {
+                if (status === 'complete' && result.regeocode) {
+                    // 🌟 使用缩短逻辑
+                    editorMeta.location = simplifyAddress(result.regeocode.addressComponent);
+                } else {
+                    editorMeta.location = `东经${lon.toFixed(2)} 北纬${lat.toFixed(2)}`;
+                }
+                finalizeLocation(oldTitle);
+            });
+            });
+        } else {
+            if (isResolved) return;
+            clearTimeout(timeoutSafeLock); isResolved = true;
+            editorMeta.location = `东经${lon.toFixed(2)} 北纬${lat.toFixed(2)}`;
             title.innerText = oldTitle;
             closeLocationModal();
             render();
-        }, error => {
-            alert("获取位置失败，可能是由于没有权限或未在 HTTPS 环境下运行。");
-            title.innerText = oldTitle;
-        });
-    } else {
-        alert("你的浏览器不支持原生定位功能。");
+        }
+
+    } catch (error) {
+        if (isResolved) return;
+        clearTimeout(timeoutSafeLock); isResolved = true;
+        console.error(error);
+        alert("⚠️ 定位失败: " + error.message);
+        title.innerText = oldTitle;
     }
+}
+
+// 辅助函数：统一收尾
+function finalizeLocation(oldTitle) {
+    document.getElementById('locationModalTitle').innerText = oldTitle;
+    closeLocationModal();
+    render();
 }
 
 function setCustomLocation() {
@@ -338,8 +432,11 @@ function render() {
         `;
     }
     else if (state.level === 'day') {
-        const dayEntries = (db[state.year][state.month]||[]).filter(e => e.day === state.day);
+        let dayEntries = (db[state.year][state.month]||[]).filter(e => e.day === state.day);
         if(dayEntries.length === 0) return goBack('month');
+
+        // 🌟 核心：强制按照时间（timeStr 比如 "14:30"）进行倒序排列，确保最新的手账永远在最上面
+        dayEntries.sort((a, b) => b.timeStr.localeCompare(a.timeStr));
 
         let entriesHtml = dayEntries.map(entry => `
             <div class="mb-12">
@@ -469,7 +566,7 @@ function render() {
                 <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v2.0.0 </p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v2.2.0 </p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -800,6 +897,101 @@ function toggleMenu(btn) {
     // 切换当前菜单的显示/隐藏状态
     menu.classList.toggle('hidden');
 }
+
+function closeMapPicker() {
+    document.getElementById('mapPickerModal').classList.add('hidden');
+}
+
+// 3. 🌟 完整的打开地图选点函数
+function openMapPicker() {
+    // 核心修复1：先关掉定位方式选择小弹窗，防止层叠冲突卡死
+    closeLocationModal(); 
+    
+    // 显示全屏地图弹窗
+    const modal = document.getElementById('mapPickerModal');
+    modal.classList.remove('hidden');
+    
+    if (!amap) {
+        // 核心修复2：延迟 100 毫秒初始化，确保地图容器已经显示，彻底告别白屏卡死
+        setTimeout(() => {
+            amap = new AMap.Map('mapContainer', { zoom: 16 });
+            
+            // 引入高德定位插件，打开地图默认回到当前真实位置
+            AMap.plugin('AMap.Geolocation', function() {
+                var geolocation = new AMap.Geolocation({
+                    enableHighAccuracy: true, // 使用高精度定位
+                    timeout: 10000,           // 超时时间
+                    buttonPosition: 'RB',     // 定位按钮放在右下角
+                    zoomToAccuracy: true      // 定位成功后调整地图视野
+                });
+                amap.addControl(geolocation);
+                
+                document.getElementById('selectedAddrInfo').innerText = "正在获取您的当前位置...";
+                
+                // 自动执行一次定位
+                geolocation.getCurrentPosition(function(status, result) {
+                    if (status === 'complete') {
+                        const lnglat = result.position;
+                        if (!amapMarker) {
+                            amapMarker = new AMap.Marker({ position: lnglat });
+                            amap.add(amapMarker);
+                        } else {
+                            amapMarker.setPosition(lnglat);
+                        }
+                        // 解析刚定位到的地址
+                        AMap.plugin('AMap.Geocoder', function() {
+                            new AMap.Geocoder().getAddress(lnglat, function(status, result) {
+                                if (status === 'complete' && result.regeocode) {
+                                    // 使用地名脱水函数
+                                    tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent);
+                                    document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`;
+                                }
+                            });
+                        });
+                    } else {
+                        document.getElementById('selectedAddrInfo').innerText = "自动定位失败，请手动滑动地图选择";
+                    }
+                });
+            });
+
+            // 监听手动点击地图选点事件
+            amap.on('click', function(e) {
+                const lnglat = e.lnglat;
+                if (!amapMarker) {
+                    amapMarker = new AMap.Marker({ position: lnglat });
+                    amap.add(amapMarker);
+                } else {
+                    amapMarker.setPosition(lnglat);
+                }
+
+                document.getElementById('selectedAddrInfo').innerText = "正在解析地址...";
+                AMap.plugin('AMap.Geocoder', function() {
+                    new AMap.Geocoder().getAddress(lnglat, function(status, result) {
+                        if (status === 'complete' && result.regeocode) {
+                            // 使用地名脱水函数
+                            tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent);
+                            document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`;
+                        } else {
+                            document.getElementById('selectedAddrInfo').innerText = "地址解析失败";
+                        }
+                    });
+                });
+            });
+        }, 100);
+    }
+}
+
+// 绑定地图弹窗里的“确定”按钮
+document.getElementById('confirmMapLoc').onclick = function() {
+    if (tempSelectedLoc) {
+        editorMeta.location = tempSelectedLoc;
+        closeMapPicker();
+        render(); // 刷新编辑器，显示最新定位
+    } else {
+        alert("请先在地图上点一个位置哦");
+    }
+};
+
 
 // 🌟 下载音频引擎 (召唤原生分享/保存弹窗版)
 async function downloadAudio(btn) {

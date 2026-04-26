@@ -76,7 +76,7 @@
                         <span class="text-[10px] text-stone-400">调用手机/电脑原生 GPS</span>
                     </div>
                 </button>
-                <button onclick="alert('受限于网页端原型，地图选点功能暂未接入真实地图 SDK。未来打包成真实 APP 后可体验完整选点功能！')" class="w-full flex items-center gap-4 p-4 border border-stone-200 rounded-2xl hover:bg-emerald-50 transition-colors group">
+                <button onclick="openMapPicker()" class="w-full flex items-center gap-4 p-4 border border-stone-200 rounded-2xl hover:bg-emerald-50 transition-colors group">
                     <div class="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl group-hover:bg-emerald-200 transition-colors">🗺️</div>
                     <div class="flex flex-col items-start">
                         <span class="text-sm font-bold text-stone-700">在地图中寻找</span>
@@ -99,15 +99,38 @@
             <h3 class="text-lg font-bold text-stone-700">正在录音...</h3>
             <div class="text-3xl font-mono text-rose-500 font-bold" id="recordTimeDisplay">00:00</div>
             <div class="mt-4 flex flex-col items-center gap-3 w-full">
-            <button onclick="stopRecording()" class="w-full py-2.5 bg-stone-800 text-white rounded-full font-bold hover:bg-stone-700 active:scale-95 transition-transform">完成录制</button>
-            <button onclick="cancelRecording()" class="text-xs text-stone-400 hover:text-stone-600 font-bold active:scale-95">取消录音</button>
-        </div>
+                <button onclick="stopRecording()" class="w-full py-2.5 bg-stone-800 text-white rounded-full font-bold hover:bg-stone-700 active:scale-95 transition-transform">完成录制</button>
+                <button onclick="cancelRecording()" class="text-xs text-stone-400 hover:text-stone-600 font-bold active:scale-95">取消录音</button>
+            </div>
         </div>
     </div>
 
+    <div id="mapPickerModal" class="hidden fixed inset-0 bg-white z-[80] flex flex-col no-print">
+        <div class="p-4 flex justify-between items-center border-b border-stone-100 bg-white">
+            <button onclick="closeMapPicker()" class="text-stone-500 font-bold px-2">取消</button>
+            <span class="font-bold text-stone-800">在地图上挑选位置</span>
+            <button id="confirmMapLoc" class="bg-cyan-600 text-white px-5 py-1.5 rounded-full text-sm font-bold shadow-md">确定</button>
+        </div>
+        <div id="mapContainer" class="flex-1 bg-stone-100"></div>
+        <div class="p-5 bg-white border-t border-stone-100 shadow-[0_-4px_15px_rgba(0,0,0,0.05)]">
+            <div class="flex items-center gap-2">
+                <span class="text-xl">📍</span>
+                <div id="selectedAddrInfo" class="text-sm text-stone-600 font-medium">请在地图上点击选择地点...</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: 'ab70a49e999d019d7996bea6f204f3f0', // 你的安全密钥
+        }
+    </script>
+    <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=378f2db27ff0e5e9935886287f46eec3"></script>
+    
     <script src="app.js"></script>
     <script src="gallery.js"></script>
     <script src="roam.js"></script>
     <script src="map.js"></script>
+
 </body>
 </html>
