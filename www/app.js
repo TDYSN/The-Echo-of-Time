@@ -1,4 +1,5 @@
-let db = JSON.parse(localStorage.getItem('WangShiShuJia_DB')) || {}; 
+// 🌟 回响 APP V2.0.0 数据中枢
+let db = {};
 let state = { level: 'home', year: null, month: null, day: null, editingId: null };
 let editorMeta = { date: '', location: '', weather: '', wordCount: 0 };
 let historyStack = [];
@@ -7,9 +8,32 @@ let audioChunks = [];
 let recordTimer = null;
 let recordSeconds = 0;
 
-function saveToLocal() {
-    try { localStorage.setItem('WangShiShuJia_DB', JSON.stringify(db)); } 
-    catch (e) { if (e.name === 'QuotaExceededError') alert("⚠️ 浏览器的本地存储空间已满（限制约5MB）。"); }
+// 🌟 终极保存引擎：移至内部安全沙盒，绝对不报错！
+async function saveToLocal() {
+    try {
+        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+            const Filesystem = Capacitor.Plugins.Filesystem;
+            
+            // 在内部沙盒 DATA 中建房
+            try {
+                await Filesystem.mkdir({ path: 'EchoAppData', directory: 'DATA', recursive: true });
+            } catch (ignoreErr) {}
+
+            // 写入中枢账本
+            await Filesystem.writeFile({
+                path: 'EchoAppData/database.json',
+                data: JSON.stringify(db),
+                directory: 'DATA',
+                encoding: 'utf8'
+            });
+            
+        } else {
+            localStorage.setItem('WangShiShuJia_DB', JSON.stringify(db));
+        }
+    } catch (e) {
+        console.error("保存失败", e);
+        alert("⚠️ 数据库写入失败！\n真实原因: " + e.message);
+    }
 }
 
 // 🌟录音函数：解决安卓授权时差 Bug
@@ -758,7 +782,51 @@ async function downloadAudio(btn) {
         alert("❌ 操作失败: " + error.message);
     }
 }
-render();
+// 🌟 V2.0.0 终极基建狂魔：内部沙盒版 (无需任何权限，秒开无感)
+async function initFileSystem() {
+    if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+        const Filesystem = Capacitor.Plugins.Filesystem;
+        const dirs = ['EchoAppData', 'EchoAppData/Images', 'EchoAppData/Videos', 'EchoAppData/Audios'];
+
+        // 1. 在安全的 DATA 沙盒里建物理文件夹
+        for (let dir of dirs) {
+            try {
+                await Filesystem.stat({ path: dir, directory: 'DATA' });
+            } catch (e) {
+                try {
+                    await Filesystem.mkdir({ path: dir, directory: 'DATA', recursive: true });
+                } catch (err) {
+                    console.log("沙盒建房小错误:", err);
+                }
+            }
+        }
+
+        // 2. 读取或创建核心账本
+        try {
+            const result = await Filesystem.readFile({ path: 'EchoAppData/database.json', directory: 'DATA', encoding: 'utf8' });
+            db = JSON.parse(result.data);
+        } catch (e) {
+            // 老版本升级迁移
+            let oldData = localStorage.getItem('WangShiShuJia_DB');
+            db = oldData ? JSON.parse(oldData) : {};
+            await saveToLocal(); 
+            
+            // 🌟 终极胜利的宣告！
+            alert("✅ V2.0 内部数据沙盒建房成功！数据已受系统最高级别保护！");
+        }
+
+    } else {
+        // 网页端逻辑
+        let oldData = localStorage.getItem('WangShiShuJia_DB');
+        db = oldData ? JSON.parse(oldData) : {};
+    }
+    
+    // 3. 开门迎客
+    render();
+}
+
+// 启动引擎！
+initFileSystem();
 
 // 🌟 全局点击监听：点页面任何空白处，关闭所有弹出的下载菜单
 document.addEventListener('click', function(event) {
