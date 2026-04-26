@@ -12,29 +12,61 @@ function saveToLocal() {
     catch (e) { if (e.name === 'QuotaExceededError') alert("⚠️ 浏览器的本地存储空间已满（限制约5MB）。"); }
 }
 
+// 🌟录音函数：解决安卓授权时差 Bug
 async function startRecording() {
-    if (!navigator.mediaDevices) return alert("⚠️ 网页调用麦克风需在 HTTPS 域名下运行。");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return alert("⚠️ 你的设备环境不支持录音功能。");
+    }
+
+    let stream;
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // 1. 第一次尝试呼叫麦克风（这里会触发系统的红色授权弹窗）
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+        // 2. 核心修复：如果用户刚点完授权，WebView 还没反应过来报错了，我们等 0.5 秒再试一次！
+        try {
+            console.log("第一次请求被中断，等待 500ms 后重试...");
+            await new Promise(resolve => setTimeout(resolve, 500));
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (retryErr) {
+            // 如果第二次还失败，把真实的错误代码打印出来，方便我们排查
+            return alert("⚠️ 录音权限被拒绝或被系统占用。\n错误代码: " + retryErr.name + "\n请在手机设置中检查权限。");
+        }
+    }
+
+    try {
+        // 3. 麦克风连接成功，开始录制
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+        
         mediaRecorder.onstop = () => {
             const reader = new FileReader();
             reader.onload = function(e) {
                 document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', e.target.result));
             };
             reader.readAsDataURL(new Blob(audioChunks, { type: 'audio/webm' }));
+            
+            // 💡 录音结束后，彻底关闭麦克风硬件，消除手机屏幕顶部的“绿点”隐私提示
             stream.getTracks().forEach(track => track.stop());
         };
+
+        // 4. 显示录音动画浮层
         document.getElementById('recordingModal').classList.remove('hidden'); 
-        recordSeconds = 0; document.getElementById('recordTimeDisplay').innerText = "00:00";
+        recordSeconds = 0; 
+        document.getElementById('recordTimeDisplay').innerText = "00:00";
         mediaRecorder.start();
+        
+        // 5. 计时器
         recordTimer = setInterval(() => {
-            recordSeconds++; document.getElementById('recordTimeDisplay').innerText = `00:${String(recordSeconds).padStart(2, '0')}`;
+            recordSeconds++; 
+            document.getElementById('recordTimeDisplay').innerText = `00:${String(recordSeconds).padStart(2, '0')}`;
             if (recordSeconds >= 60) stopRecording();
         }, 1000);
-    } catch (err) { alert("⚠️ 无法访问麦克风。请确保你已点击【允许】。"); }
+
+    } catch (err) {
+        alert("⚠️ 录音引擎初始化失败：" + err.message);
+    }
 }
 
 function stopRecording() {
@@ -230,7 +262,7 @@ function render() {
                 </div>
                 <div class="bg-white p-4 rounded-b-3xl border border-stone-200 shadow-sm flex flex-col sm:flex-row justify-between sm:items-center text-xs text-stone-400 gap-3">
                     <div class="flex items-center gap-2 font-mono font-bold text-stone-500">
-                        <span class="text-lg">🕒</span> <span>${entry.fullDateStr || entry.timeStr}</span>
+                        <span class="text-base">🕒</span> <span>${entry.fullDateStr || entry.timeStr}</span>
                     </div>
                     <div class="flex flex-wrap gap-4 items-center font-medium">
                         <div class="flex items-center gap-1"><span class="text-base">📍</span> <span class="truncate max-w-[100px]">${entry.location || '无定位'}</span></div>
@@ -316,7 +348,7 @@ function render() {
             canvas.innerHTML = entry.html;
             canvas.querySelectorAll('p').forEach(p => {
                 const ta = document.createElement('textarea');
-                ta.className = 'w-full bg-transparent border-none resize-none text-stone-700 text-lg leading-relaxed placeholder-stone-400';
+                ta.className = 'w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-400';
                 ta.value = p.innerText;
                 ta.oninput = function() { this.style.height = ''; this.style.height = this.scrollHeight + 'px'; calculateWordCount(); };
                 p.parentNode.replaceChild(ta, p);
@@ -414,7 +446,7 @@ function saveJournal() {
 
     canvas.querySelectorAll('textarea').forEach(ta => {
         const p = document.createElement('p');
-        p.className = 'text-stone-700 text-lg leading-relaxed whitespace-pre-wrap outline-none';
+        p.className = 'text-stone-700 text-base leading-relaxed whitespace-pre-wrap outline-none';
         p.innerText = ta.value;
         ta.parentNode.replaceChild(p, ta);
     });
@@ -476,7 +508,7 @@ function deleteEntry(id) {
 function createBlockHTML(type, url = '') {
     let inner = '';
     if (type === 'text') {
-        inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 text-lg leading-relaxed placeholder-stone-400" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount();"></textarea>`;
+        inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-400" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount();"></textarea>`;
     } else if (type === 'image') {
         inner = `<img src="${url}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mt-2">`;
     } else if (type === 'video') {
