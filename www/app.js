@@ -1,7 +1,8 @@
-// 🌟 回响 APP V2.0.0 数据中枢
+// 🌟 回响 APP V2.3.0 数据中枢 (含长文本排版引擎)
 let db = {};
 let state = { level: 'home', year: null, month: null, day: null, editingId: null };
-let editorMeta = { date: '', location: '', weather: '', wordCount: 0 };
+// 🌟 注入文章模式状态
+let editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false };
 let historyStack = [];
 let mediaRecorder = null;
 let audioChunks = [];
@@ -10,27 +11,21 @@ let recordSeconds = 0;
 let isRecordingCancelled = false;
 let amap = null;
 let amapMarker = null;
-let tempSelectedLoc = ''; // 临时存储选中的地名
+let tempSelectedLoc = '';
 
-// 🌟 终极保存引擎：移至内部安全沙盒，绝对不报错！
 async function saveToLocal() {
     try {
         if (window.Capacitor && window.Capacitor.isNativePlatform()) {
             const Filesystem = Capacitor.Plugins.Filesystem;
-            
-            // 在内部沙盒 DATA 中建房
             try {
                 await Filesystem.mkdir({ path: 'EchoAppData', directory: 'DATA', recursive: true });
             } catch (ignoreErr) {}
-
-            // 写入中枢账本
             await Filesystem.writeFile({
                 path: 'EchoAppData/database.json',
                 data: JSON.stringify(db),
                 directory: 'DATA',
                 encoding: 'utf8'
             });
-            
         } else {
             localStorage.setItem('WangShiShuJia_DB', JSON.stringify(db));
         }
@@ -40,50 +35,36 @@ async function saveToLocal() {
     }
 }
 
-// 🌟 V2.1 终极媒体落盘引擎：拦截 Base64，写入本地沙盒
 async function saveMediaToDisk(base64Data, type) {
-    // 网页端调试时，降级直接返回 base64，不影响你在电脑浏览器上测试
     if (!window.Capacitor || !window.Capacitor.isNativePlatform()) {
         return base64Data; 
     }
-
     const Filesystem = Capacitor.Plugins.Filesystem;
     const timestamp = Date.now();
     let folder = '';
     let ext = '';
 
-    // 自动路由到你的专属“别墅”房间
     if (type === 'image') { folder = 'Images'; ext = 'jpg'; } 
     else if (type === 'video') { folder = 'Videos'; ext = 'mp4'; } 
     else if (type === 'voice') { folder = 'Audios'; ext = 'webm'; }
 
     const fileName = `${folder.substring(0, 3).toLowerCase()}_${timestamp}.${ext}`;
     const path = `EchoAppData/${folder}/${fileName}`;
-
-    // 关键操作：前端读出来的 base64 长这样 "data:image/jpeg;base64,/9j/4AA..."
-    // 写入原生磁盘时，必须把前面的描述头劈掉，只要后面的纯数据
     const base64Content = base64Data.split(',')[1];
 
     try {
-        // 物理落盘
         const result = await Filesystem.writeFile({
             path: path,
             data: base64Content,
             directory: 'DATA'
         });
-        
-        // 🌟 终极魔法：手机底层的 file:// 路径 WebView 是不准读的（跨域安全限制）
-        // 这里调用 Capacitor 的底层 API，把它转换成 http://localhost/_capacitor_file_/ 这种合法路径
         return Capacitor.convertFileSrc(result.uri);
-        
     } catch (e) {
         console.error("文件落盘失败，已降级回 Base64", e);
-        return base64Data; // 即使失败了，兜底用 base64，保证数据不丢
+        return base64Data; 
     }
 }
 
-
-// 🌟录音函数：解决安卓授权时差 Bug
 async function startRecording() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         return alert("⚠️ 你的设备环境不支持录音功能。");
@@ -91,43 +72,30 @@ async function startRecording() {
 
     let stream;
     try {
-        // 1. 第一次尝试呼叫麦克风（这里会触发系统的红色授权弹窗）
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-        // 2. 核心修复：如果用户刚点完授权，WebView 还没反应过来报错了，我们等 0.5 秒再试一次！
         try {
-            console.log("第一次请求被中断，等待 500ms 后重试...");
             await new Promise(resolve => setTimeout(resolve, 500));
             stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         } catch (retryErr) {
-            // 如果第二次还失败，把真实的错误代码打印出来，方便我们排查
-            return alert("⚠️ 录音权限被拒绝或被系统占用。\n错误代码: " + retryErr.name + "\n请在手机设置中检查权限。");
+            return alert("⚠️ 录音权限被拒绝或被系统占用。\n错误代码: " + retryErr.name);
         }
     }
 
     try {
-        // 3. 麦克风连接成功，开始录制
-        
-        // 👇👇👇 就是这里！你丢失的核心代码，用来初始化录音机和装载音频数据！
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-        // 👆👆👆 丢失代码结束
         
         mediaRecorder.onstop = () => {
             const reader = new FileReader();
             const finalDuration = recordSeconds;
-            
-            // 🌟 核心：在录音停止的一瞬间，生成当前的北京时间字符串
             const now = new Date();
             const recordTime = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日${now.getHours()}点${String(now.getMinutes()).padStart(2, '0')}分`;
             
-            // 🌟 同样加上 async
             reader.onload = async function(e) {
                 if (!isRecordingCancelled) {
-                    // 1. 拦截录音 Base64 落盘
                     const localUrl = await saveMediaToDisk(e.target.result, 'voice');
-                    // 2. 气泡里绑定的 src 现在变成了本地清爽路径
                     document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', localUrl, finalDuration, recordTime));
                 }
                 isRecordingCancelled = false; 
@@ -136,13 +104,11 @@ async function startRecording() {
             stream.getTracks().forEach(track => track.stop());
         };
 
-        // 4. 显示录音动画浮层
         document.getElementById('recordingModal').classList.remove('hidden'); 
         recordSeconds = 0; 
         document.getElementById('recordTimeDisplay').innerText = "00:00";
-        mediaRecorder.start(); // 现在它有真实的音频流了，不会再报错了！
+        mediaRecorder.start(); 
         
-        // 5. 计时器
         recordTimer = setInterval(() => {
             recordSeconds++; 
             document.getElementById('recordTimeDisplay').innerText = `00:${String(recordSeconds).padStart(2, '0')}`;
@@ -162,7 +128,6 @@ function stopRecording() {
 }
 
 function cancelRecording() {
-    // 举起拦截牌
     isRecordingCancelled = true; 
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.stop(); 
@@ -170,7 +135,6 @@ function cancelRecording() {
         document.getElementById('recordingModal').classList.add('hidden');
     }
 }
-
 
 function toggleSidebar() {
     const sidebar = document.getElementById('sidebar');
@@ -211,28 +175,19 @@ function exportToPDF() {
 function openLocationModal() { document.getElementById('locationModal').classList.remove('hidden'); }
 function closeLocationModal() { document.getElementById('locationModal').classList.add('hidden'); }
 
-
-// 🌟 智能地名“脱水”：广东省深圳市宝安区 -> 深圳宝安
 function simplifyAddress(components) {
-    // 1. 获取城市（如果是直辖市，city 字段可能为空，则取 province）
     let city = components.city && typeof components.city === 'string' ? components.city : components.province;
-    // 2. 获取区县或街道
     let district = components.district || components.township || "";
-    
-    // 去掉“省”、“市”、“区”、“街道”等后缀
     city = city.replace(/省|市/g, '');
     district = district.replace(/区|街道|镇|乡/g, '');
-    
     return city + district;
 }
 
-// 🌟 V3.1 防死锁安全定位引擎
 async function getLocationFromDevice() {
     const title = document.getElementById('locationModalTitle');
     const oldTitle = title.innerText;
     title.innerText = "卫星连接中...";
 
-    // 🌟 加一把安全锁：如果10秒还没拿到数据，强制解锁，防止一直转圈
     let isResolved = false;
     const timeoutSafeLock = setTimeout(() => {
         if (!isResolved) {
@@ -257,25 +212,22 @@ async function getLocationFromDevice() {
 
             let position;
             try {
-                // 策略A：先尝试高精度定位，但只给它 4 秒钟时间
                 position = await Geolocation.getCurrentPosition({
                     enableHighAccuracy: true,
                     timeout: 4000,
-                    maximumAge: 30000 // 允许使用 30 秒内的缓存
+                    maximumAge: 30000 
                 });
             } catch (highAccErr) {
                 console.log("高精度获取失败，降级为基站/Wi-Fi粗略定位...");
-                // 策略B：如果高精度超时或失败，立马降级为低精度（秒出）
                 position = await Geolocation.getCurrentPosition({
-                    enableHighAccuracy: false, // 关闭高精度，利用 Wi-Fi 和基站
+                    enableHighAccuracy: false, 
                     timeout: 5000,
-                    maximumAge: 300000 // 允许使用 5 分钟内的缓存
+                    maximumAge: 300000 
                 });
             }
             lat = position.coords.latitude;
             lon = position.coords.longitude;
         } else {
-            // Web 端降级拿坐标（🌟 补充了 timeout 参数）
             await new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(
                     pos => { lat = pos.coords.latitude; lon = pos.coords.longitude; resolve(); },
@@ -290,7 +242,6 @@ async function getLocationFromDevice() {
                 var geocoder = new AMap.Geocoder({ city: "010" });
                 geocoder.getAddress([lon, lat], function(status, result) {
                 if (status === 'complete' && result.regeocode) {
-                    // 🌟 使用缩短逻辑
                     editorMeta.location = simplifyAddress(result.regeocode.addressComponent);
                 } else {
                     editorMeta.location = `东经${lon.toFixed(2)} 北纬${lat.toFixed(2)}`;
@@ -316,7 +267,6 @@ async function getLocationFromDevice() {
     }
 }
 
-// 辅助函数：统一收尾
 function finalizeLocation(oldTitle) {
     document.getElementById('locationModalTitle').innerText = oldTitle;
     closeLocationModal();
@@ -343,7 +293,6 @@ function openWeatherModal() { document.getElementById('weatherModal').classList.
 function closeWeatherModal() { document.getElementById('weatherModal').classList.add('hidden'); }
 function selectWeather(w) { editorMeta.weather = w; closeWeatherModal(); render(); }
 
-// 🌟 新增：进入设置页面的功能函数
 function goToSettings() {
     closeSidebar();
     historyStack.push({...state});
@@ -351,7 +300,7 @@ function goToSettings() {
     render();
 }
 
-// 核心渲染引擎
+// 🌟 核心渲染引擎
 function render() {
     const app = document.getElementById('app');
     
@@ -435,7 +384,6 @@ function render() {
         let dayEntries = (db[state.year][state.month]||[]).filter(e => e.day === state.day);
         if(dayEntries.length === 0) return goBack('month');
 
-        // 🌟 核心：强制按照时间（timeStr 比如 "14:30"）进行倒序排列，确保最新的手账永远在最上面
         dayEntries.sort((a, b) => b.timeStr.localeCompare(a.timeStr));
 
         let entriesHtml = dayEntries.map(entry => `
@@ -481,9 +429,17 @@ function render() {
             ${renderAddButton()}
         `;
     }
+    // 🌟 核心：注入长文本文章排版的 Editor 界面
     else if (state.level === 'editor') {
         app.innerHTML = `
             <div class="flex flex-col h-full journal-bg relative">
+                
+                <div id="articlePrompt" class="hidden absolute top-16 left-1/2 -translate-x-1/2 bg-cyan-600/95 backdrop-blur text-white px-5 py-2.5 rounded-full shadow-lg z-50 text-xs font-bold flex items-center gap-3 animate-bounce">
+                    <span>字数超66啦，要切成排版更好的文章模式吗？</span>
+                    <button onclick="toggleArticleMode()" class="bg-white text-cyan-600 px-3 py-1.5 rounded-full shadow-sm active:scale-95 transition-transform">切换</button>
+                    <button onclick="document.getElementById('articlePrompt').classList.add('hidden')" class="text-cyan-200 ml-1 text-base">✕</button>
+                </div>
+
                 <div class="flex justify-between items-center p-4 bg-white/80 backdrop-blur-md border-b border-stone-200 sticky top-0 z-20 no-print">
                     <button onclick="cancelEdit()" class="text-stone-400 font-bold hover:text-stone-600">取消</button>
                     <span class="font-serif font-bold text-stone-700 text-sm tracking-widest">${state.editingId ? '修改手账' : '新的一页'}</span>
@@ -493,11 +449,11 @@ function render() {
                 <div id="journal-canvas" class="flex-1 p-6 pb-40 overflow-y-auto space-y-2" onkeyup="calculateWordCount()"></div>
 
                 <div class="absolute bottom-[68px] left-0 w-full bg-white/95 backdrop-blur-sm border-t border-stone-200 p-2.5 flex justify-between items-center text-[11px] text-stone-500 z-10 shadow-[0_-5px_15px_rgba(0,0,0,0.02)] no-print">
-                <div class="relative flex items-center justify-center gap-1 cursor-pointer hover:text-cyan-600 transition-colors w-1/4">
-                    <span>🕒</span>
-                    <span class="text-stone-400 truncate">时间</span>
-                    <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value)" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
-                </div>
+                    <div class="relative flex items-center justify-center gap-1 cursor-pointer hover:text-cyan-600 transition-colors w-1/4">
+                        <span>🕒</span>
+                        <span class="text-stone-400 truncate">时间</span>
+                        <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value)" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
+                    </div>
                     <div class="w-px h-4 bg-stone-200 flex-shrink-0"></div>
                     <div onclick="openLocationModal()" class="flex items-center justify-center cursor-pointer hover:text-cyan-600 transition-colors w-1/4 px-1">
                         <div class="flex items-center gap-1 truncate">
@@ -509,8 +465,8 @@ function render() {
                         <span id="weatherDisplay" class="truncate">${editorMeta.weather || '🌤️ 天气'}</span>
                     </div>
                     <div class="w-px h-4 bg-stone-200 flex-shrink-0"></div>
-                    <div class="flex items-center justify-center w-1/4 px-1 font-bold text-stone-400">
-                        <span id="wordCountDisplay">字数：${editorMeta.wordCount} 字</span>
+                    <div class="flex items-center justify-center w-1/4 px-1 font-bold text-stone-400 cursor-pointer hover:text-cyan-600 transition-colors" onclick="toggleArticleMode()">
+                        <span id="wordCountDisplay">字数：${editorMeta.wordCount}</span>
                     </div>
                 </div>
 
@@ -537,9 +493,12 @@ function render() {
         if (state.editingId) {
             const entry = db[state.year][state.month].find(x => x.id === state.editingId);
             canvas.innerHTML = entry.html;
+            
+            // 动态重组输入框样式
+            const taStyle = editorMeta.isArticleMode ? 'text-sm indent-8 leading-loose' : 'text-base leading-relaxed';
             canvas.querySelectorAll('p').forEach(p => {
                 const ta = document.createElement('textarea');
-                ta.className = 'w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-400';
+                ta.className = `w-full bg-transparent border-none resize-none text-stone-700 ${taStyle} placeholder-stone-400`;
                 ta.value = p.innerText;
                 ta.oninput = function() { this.style.height = ''; this.style.height = this.scrollHeight + 'px'; calculateWordCount(); };
                 p.parentNode.replaceChild(ta, p);
@@ -550,7 +509,6 @@ function render() {
             canvas.innerHTML = createBlockHTML('text');
         }
     }
-    // 🌟 新增：设置页面的 UI 渲染
     else if (state.level === 'settings') {
         app.innerHTML = `
             <div class="p-6 h-full overflow-y-auto bg-stone-50">
@@ -566,7 +524,7 @@ function render() {
                 <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v2.2.1 </p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v2.4.1 </p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -583,10 +541,6 @@ function render() {
                         <span class="text-stone-400 text-sm">Echoappdata文件</span>
                     </div>
                 </div>
-                
-                <div class="text-center mt-10 text-stone-300 text-xs">
-                    <p>每一次记录，都是时间的馈赠。</p>
-                </div>
             </div>
         `;
     }
@@ -600,8 +554,40 @@ function calculateWordCount() {
         totalWords += ta.value.trim().length;
     });
     editorMeta.wordCount = totalWords;
+    
     const display = document.getElementById('wordCountDisplay');
-    if (display) display.innerText = `字数：${totalWords} 字`;
+    if (display) {
+        display.innerHTML = `字数：${totalWords} <span class="ml-1 text-[9px] ${editorMeta.isArticleMode ? 'bg-cyan-100 text-cyan-600' : 'bg-stone-100 text-stone-500'} px-1.5 py-0.5 rounded border border-stone-200/50">${editorMeta.isArticleMode ? '文章' : '短篇'}</span>`;
+    }
+
+    if (totalWords >= 66 && !editorMeta.isArticleMode && !editorMeta.hasPromptedArticle) {
+        editorMeta.hasPromptedArticle = true;
+        const prompt = document.getElementById('articlePrompt');
+        if(prompt) prompt.classList.remove('hidden');
+    }
+}
+
+function toggleArticleMode() {
+    editorMeta.isArticleMode = !editorMeta.isArticleMode;
+    editorMeta.hasPromptedArticle = true; 
+    
+    const prompt = document.getElementById('articlePrompt');
+    if(prompt) prompt.classList.add('hidden');
+
+    const canvas = document.getElementById('journal-canvas');
+    if(canvas) {
+        canvas.querySelectorAll('textarea').forEach(ta => {
+            if (editorMeta.isArticleMode) {
+                ta.classList.remove('text-base', 'leading-relaxed');
+                ta.classList.add('text-sm', 'indent-8', 'leading-loose');
+            } else {
+                ta.classList.remove('text-sm', 'indent-8', 'leading-loose');
+                ta.classList.add('text-base', 'leading-relaxed');
+            }
+            ta.style.height = ''; ta.style.height = ta.scrollHeight + 'px';
+        });
+    }
+    calculateWordCount(); 
 }
 
 function renderAddButton() {
@@ -623,23 +609,40 @@ function goToMonth(m) { state.level = 'month'; state.month = m; render(); }
 function goToDay(d) { state.level = 'day'; state.day = d; render(); }
 
 function goToEditor() { 
-    editorMeta = { date: formatDateTimeLocal(new Date()), location: '', weather: '', wordCount: 0 };
+    editorMeta = { date: formatDateTimeLocal(new Date()), location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false };
     historyStack.push({...state}); state.level = 'editor'; state.editingId = null; render(); 
 }
 
 function cancelEdit() { state = historyStack.pop() || { level: 'home', year: null, month: null, day: null }; render(); }
 function goBack(target) { if (target) state.level = target; render(); }
 
+// 🌟 黑科技：长文本回车自动切段
 function saveJournal() {
     const canvas = document.getElementById('journal-canvas');
     if (!editorMeta.date) return alert("请输入确切的时间！");
     calculateWordCount();
 
     canvas.querySelectorAll('textarea').forEach(ta => {
-        const p = document.createElement('p');
-        p.className = 'text-stone-700 text-base leading-relaxed whitespace-pre-wrap outline-none';
-        p.innerText = ta.value;
-        ta.parentNode.replaceChild(p, ta);
+        const isArticle = editorMeta.isArticleMode;
+        const pStyle = isArticle ? 'text-sm indent-8 leading-loose mb-1' : 'text-base leading-relaxed';
+        
+        if (isArticle) {
+            const lines = ta.value.split('\n');
+            const fragment = document.createDocumentFragment();
+            lines.forEach(line => {
+                const p = document.createElement('p');
+                p.className = `text-stone-700 ${pStyle} whitespace-pre-wrap outline-none`;
+                p.innerText = line;
+                if(line.trim() === '') p.innerHTML = '<br>'; 
+                fragment.appendChild(p);
+            });
+            ta.parentNode.replaceChild(fragment, ta);
+        } else {
+            const p = document.createElement('p');
+            p.className = `text-stone-700 ${pStyle} whitespace-pre-wrap outline-none`;
+            p.innerText = ta.value;
+            ta.parentNode.replaceChild(p, ta);
+        }
     });
 
     const htmlContent = canvas.innerHTML;
@@ -657,7 +660,6 @@ function saveJournal() {
     if (!db[y][m]) db[y][m] = [];
 
     const newId = state.editingId || 'e_' + Date.now();
-
     if (state.editingId) {
         const oldY = state.year, oldM = state.month;
         if (db[oldY] && db[oldY][oldM]) {
@@ -668,7 +670,9 @@ function saveJournal() {
     db[y][m].unshift({
         id: newId, day: d, timeStr: timeStr, fullDateStr: fullDateStr, 
         location: editorMeta.location, weather: editorMeta.weather, 
-        wordCount: editorMeta.wordCount, html: htmlContent
+        wordCount: editorMeta.wordCount, 
+        isArticleMode: editorMeta.isArticleMode, 
+        html: htmlContent
     });
 
     saveToLocal();
@@ -683,7 +687,9 @@ function editEntry(id) {
         date: `${state.year}-${pad(state.month)}-${pad(entry.day)}T${entry.timeStr}`,
         location: entry.location || '',
         weather: entry.weather || '',
-        wordCount: entry.wordCount || 0
+        wordCount: entry.wordCount || 0,
+        isArticleMode: entry.isArticleMode || false, 
+        hasPromptedArticle: true 
     };
     historyStack.push({...state}); state.level = 'editor'; state.editingId = id; render();
 }
@@ -696,20 +702,20 @@ function deleteEntry(id) {
     }
 }
 
-// 注意参数里加上了 duration = 0
+// 🌟 完整的块生成引擎，绝无删减！
 function createBlockHTML(type, url = '', duration = 0, timestamp = '') {
     let inner = '';
+    const textStyle = editorMeta.isArticleMode ? 'text-sm indent-8 leading-loose' : 'text-base leading-relaxed';
+    
     if (type === 'text') {
-        inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-400" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount();"></textarea>`;
+        inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 ${textStyle} placeholder-stone-400" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount();"></textarea>`;
     } else if (type === 'image') {
         inner = `<img src="${url}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mt-2">`;
     } else if (type === 'video') {
         inner = `<div class="py-2"><video controls class="w-full rounded-lg shadow-sm border border-stone-200 mt-2" src="${url}"></video></div>`;
-   } else if (type === 'voice') {
+    } else if (type === 'voice') {
         const pad = n => String(Math.floor(n)).padStart(2, '0');
         const timeStr = duration > 0 ? `0:${pad(duration)}` : '0:00';
-        
-        // 🌟 修复了缺失的反引号，并完美融合了你的所有 UI 和时间数据
         inner = `
         <div class="voice-container bg-cyan-50 border border-cyan-100 rounded-xl px-3 py-2 w-[280px] max-w-[90vw] shadow-sm flex items-center gap-2 no-print" 
              data-duration="${duration}" 
@@ -777,17 +783,14 @@ function addBlock(type, event) {
     
     if ((type === 'image' || type === 'video') && event.target.files[0]) {
         const reader = new FileReader();
-        // 🌟 注意：这里加上了 async，因为要等待落盘完成
         reader.onload = async function(e) {
-            // 1. 拦截 Base64，执行异步落盘，拿回本地物理虚拟路径
             const localUrl = await saveMediaToDisk(e.target.result, type);
-            // 2. 用安全轻量的 localUrl 渲染到手账里，不再是冗长的 Base64！
             canvas.insertAdjacentHTML('beforeend', createBlockHTML(type, localUrl));
             canvas.scrollTop = canvas.scrollHeight;
         };
         reader.readAsDataURL(event.target.files[0]);
         event.target.value = '';
-    }else {
+    } else {
         canvas.insertAdjacentHTML('beforeend', createBlockHTML(type));
         canvas.scrollTop = canvas.scrollHeight;
     }
@@ -802,7 +805,6 @@ function moveBlock(button, direction) {
     }
 }
 
-// 1. 播放/暂停控制 (升级为控制 SVG 显示/隐藏)
 function toggleVoice(btn) {
     const container = btn.closest('.voice-container');
     const audio = container.querySelector('.voice-player');
@@ -817,35 +819,29 @@ function toggleVoice(btn) {
             }
         });
         audio.play();
-        // 播放时：藏起播放键，露出暂停键
         svgPlay.classList.add('hidden');
         svgPause.classList.remove('hidden');
     } else {
         audio.pause();
-        // 暂停时：藏起暂停键，露出播放键
         svgPlay.classList.remove('hidden');
         svgPause.classList.add('hidden');
     }
 }
 
-// 2. 🌟 进度条动态更新引擎 (每秒触发几十次)
 function updateVoiceProgress(audio) {
     const container = audio.closest('.voice-container');
     const timeDisplay = container.querySelector('.time-display');
     const progressBar = container.querySelector('.progress-bar');
     
-    // 计算当前播放了百分之几
     const currentSeconds = Math.floor(audio.currentTime);
     const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1);
     const percent = (audio.currentTime / totalSeconds) * 100;
     
-    // 推送给 UI：拉长进度条，改变数字
     progressBar.style.width = `${percent}%`;
     const pad = n => String(n).padStart(2, '0');
     timeDisplay.innerText = `0:${pad(currentSeconds)}`;
 }
 
-// 3. 播放结束/被打断时的复位引擎 (升级为还原 SVG 状态)
 function resetVoiceProgress(audio) {
     const container = audio.closest('.voice-container');
     const svgPlay = container.querySelector('.svg-play');
@@ -857,7 +853,6 @@ function resetVoiceProgress(audio) {
     audio.currentTime = 0; 
     progressBar.style.width = '0%'; 
     
-    // 复位图标：露出播放键
     if(svgPlay && svgPause) {
         svgPlay.classList.remove('hidden');
         svgPause.classList.add('hidden');
@@ -867,17 +862,14 @@ function resetVoiceProgress(audio) {
     timeDisplay.innerText = duration > 0 ? `0:${pad(duration)}` : '0:00';
 }
 
-// 4. 🔈 静音/取消静音切换
 function toggleMute(btn) {
     const container = btn.closest('.voice-container');
     const audio = container.querySelector('.voice-player');
     const svgOn = btn.querySelector('.svg-on');
     const svgOff = btn.querySelector('.svg-off');
 
-    // 切换静音状态
     audio.muted = !audio.muted;
     
-    // 切换图标显示
     if (audio.muted) {
         svgOn.classList.add('hidden');
         svgOff.classList.remove('hidden');
@@ -887,14 +879,11 @@ function toggleMute(btn) {
     }
 }
 
-// 🌟 显示/隐藏三个点的菜单
 function toggleMenu(btn) {
     const menu = btn.nextElementSibling;
-    // 如果页面上有好几段录音，点开这个菜单时，自动关掉其他打开的菜单
     document.querySelectorAll('.voice-menu').forEach(m => {
         if (m !== menu) m.classList.add('hidden');
     });
-    // 切换当前菜单的显示/隐藏状态
     menu.classList.toggle('hidden');
 }
 
@@ -902,33 +891,26 @@ function closeMapPicker() {
     document.getElementById('mapPickerModal').classList.add('hidden');
 }
 
-// 3. 🌟 完整的打开地图选点函数
 function openMapPicker() {
-    // 核心修复1：先关掉定位方式选择小弹窗，防止层叠冲突卡死
     closeLocationModal(); 
-    
-    // 显示全屏地图弹窗
     const modal = document.getElementById('mapPickerModal');
     modal.classList.remove('hidden');
     
     if (!amap) {
-        // 核心修复2：延迟 100 毫秒初始化，确保地图容器已经显示，彻底告别白屏卡死
         setTimeout(() => {
             amap = new AMap.Map('mapContainer', { zoom: 16 });
             
-            // 引入高德定位插件，打开地图默认回到当前真实位置
             AMap.plugin('AMap.Geolocation', function() {
                 var geolocation = new AMap.Geolocation({
-                    enableHighAccuracy: true, // 使用高精度定位
-                    timeout: 10000,           // 超时时间
-                    buttonPosition: 'RB',     // 定位按钮放在右下角
-                    zoomToAccuracy: true      // 定位成功后调整地图视野
+                    enableHighAccuracy: true, 
+                    timeout: 10000,           
+                    buttonPosition: 'RB',     
+                    zoomToAccuracy: true      
                 });
                 amap.addControl(geolocation);
                 
                 document.getElementById('selectedAddrInfo').innerText = "正在获取您的当前位置...";
                 
-                // 自动执行一次定位
                 geolocation.getCurrentPosition(function(status, result) {
                     if (status === 'complete') {
                         const lnglat = result.position;
@@ -938,11 +920,9 @@ function openMapPicker() {
                         } else {
                             amapMarker.setPosition(lnglat);
                         }
-                        // 解析刚定位到的地址
                         AMap.plugin('AMap.Geocoder', function() {
                             new AMap.Geocoder().getAddress(lnglat, function(status, result) {
                                 if (status === 'complete' && result.regeocode) {
-                                    // 使用地名脱水函数
                                     tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent);
                                     document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`;
                                 }
@@ -954,7 +934,6 @@ function openMapPicker() {
                 });
             });
 
-            // 监听手动点击地图选点事件
             amap.on('click', function(e) {
                 const lnglat = e.lnglat;
                 if (!amapMarker) {
@@ -968,7 +947,6 @@ function openMapPicker() {
                 AMap.plugin('AMap.Geocoder', function() {
                     new AMap.Geocoder().getAddress(lnglat, function(status, result) {
                         if (status === 'complete' && result.regeocode) {
-                            // 使用地名脱水函数
                             tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent);
                             document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`;
                         } else {
@@ -981,19 +959,16 @@ function openMapPicker() {
     }
 }
 
-// 绑定地图弹窗里的“确定”按钮
 document.getElementById('confirmMapLoc').onclick = function() {
     if (tempSelectedLoc) {
         editorMeta.location = tempSelectedLoc;
         closeMapPicker();
-        render(); // 刷新编辑器，显示最新定位
+        render(); 
     } else {
         alert("请先在地图上点一个位置哦");
     }
 };
 
-
-// 🌟 下载音频引擎 (召唤原生分享/保存弹窗版)
 async function downloadAudio(btn) {
     const container = btn.closest('.voice-container');
     const audio = container.querySelector('.voice-player');
@@ -1001,7 +976,6 @@ async function downloadAudio(btn) {
 
     menu.classList.add('hidden');
 
-    // 🌟 获取我们之前存好的“录制时间”
     const recordedTime = container.getAttribute('data-recorded-at') || '未知时间';
     const fileName = `回响APP_语音_${Date.now()}.webm`;
 
@@ -1022,7 +996,6 @@ async function downloadAudio(btn) {
                 directory: 'CACHE'
             });
 
-            // 🌟 4. 召唤分享面板，带上精准的时间描述
             await Share.share({
                 title: '回响语音分享',
                 text: `这是我在【回响】录制的一段珍贵语音，时间是${recordedTime}。`,
@@ -1031,7 +1004,6 @@ async function downloadAudio(btn) {
             });
 
         } else {
-            // 电脑端逻辑
             const a = document.createElement('a');
             a.href = audio.src;
             a.download = fileName;
@@ -1042,13 +1014,12 @@ async function downloadAudio(btn) {
         alert("❌ 操作失败: " + error.message);
     }
 }
-// 🌟 V2.0.0 终极基建狂魔：内部沙盒版 (无需任何权限，秒开无感)
+
 async function initFileSystem() {
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
         const Filesystem = Capacitor.Plugins.Filesystem;
         const dirs = ['EchoAppData', 'EchoAppData/Images', 'EchoAppData/Videos', 'EchoAppData/Audios'];
 
-        // 1. 在安全的 DATA 沙盒里建物理文件夹 (并行加速版)
         await Promise.all(dirs.map(async (dir) => {
             try {
                 await Filesystem.stat({ path: dir, directory: 'DATA' });
@@ -1058,54 +1029,42 @@ async function initFileSystem() {
             }
         }));
 
-        // 2. 读取或创建核心账本
         try {
             const result = await Filesystem.readFile({ path: 'EchoAppData/database.json', directory: 'DATA', encoding: 'utf8' });
             db = JSON.parse(result.data);
         } catch (e) {
-            // 老版本升级迁移
             let oldData = localStorage.getItem('WangShiShuJia_DB');
             db = oldData ? JSON.parse(oldData) : {};
             await saveToLocal(); 
-            
-            // 🌟 终极胜利的宣告！
             alert("欢迎来到，时间的回响");
-            //alert("V2.0 内部数据沙盒建房成功！数据已受系统最高级别保护！");
         }
 
     } else {
-        // 网页端逻辑
         let oldData = localStorage.getItem('WangShiShuJia_DB');
         db = oldData ? JSON.parse(oldData) : {};
     }
     
-    // 3. 开门迎客
     render();
 }
 
-// 启动引擎！
 initFileSystem();
 
-
-// 🌟 原生物理返回键拦截引擎
 async function initHardwareBackButton() {
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
         const App = Capacitor.Plugins.App;
         
         App.addListener('backButton', () => {
-            // 智能判断当前页面层级，执行对应的返回操作
             if (state.level === 'home') {
-                App.exitApp(); // 只有在主页，才真正退出 APP
+                App.exitApp(); 
             } else if (state.level === 'editor') {
-                cancelEdit(); // 在写手账时，相当于点左上角的取消
+                cancelEdit(); 
             } else if (['year', 'gallery', 'roam', 'map', 'settings'].includes(state.level)) {
-                goBack('home'); // 这几个一级模块，都退回主页
+                goBack('home'); 
             } else if (state.level === 'month') {
                 goBack('year');
             } else if (state.level === 'day') {
                 goBack('month');
             } else if (state.level === 'locationDetails') {
-                // 如果在地图的位置详情页，退回地图大页
                 state.level = 'map'; 
                 renderMapView();
             }
@@ -1113,16 +1072,10 @@ async function initHardwareBackButton() {
     }
 }
 
-// 启动物理键监听
 initHardwareBackButton();
 
-
-// 🌟 全局点击监听：点页面任何空白处，关闭所有弹出的下载菜单
 document.addEventListener('click', function(event) {
-    // 判断当前点击的东西，是不是那个“三个点”按钮，或者它里面的图标
     const isClickOnMenuBtn = event.target.closest('button[onclick="toggleMenu(this)"]');
-    
-    // 如果点的【不是】菜单按钮，就把所有打开的菜单关掉
     if (!isClickOnMenuBtn) {
         document.querySelectorAll('.voice-menu').forEach(menu => {
             menu.classList.add('hidden');
