@@ -1,8 +1,7 @@
-// 🌟 回响 APP V2.3.0 数据中枢 (含长文本排版引擎)
+// 🌟 回响 APP V3.0.0 数据中枢 (文章尾部元数据引擎 & 局部防丢渲染)
 let db = {};
-let state = { level: 'home', year: null, month: null, day: null, editingId: null };
-// 🌟 注入文章模式状态
-let editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false };
+let state = { level: 'home', year: null, month: null, day: null, editingId: null, currentArticleId: null };
+let editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false, title: '', device: '' };
 let historyStack = [];
 let mediaRecorder = null;
 let audioChunks = [];
@@ -13,19 +12,15 @@ let amap = null;
 let amapMarker = null;
 let tempSelectedLoc = '';
 
+let savedRange = null;
+let isEditorDirty = false;
+
 async function saveToLocal() {
     try {
         if (window.Capacitor && window.Capacitor.isNativePlatform()) {
             const Filesystem = Capacitor.Plugins.Filesystem;
-            try {
-                await Filesystem.mkdir({ path: 'EchoAppData', directory: 'DATA', recursive: true });
-            } catch (ignoreErr) {}
-            await Filesystem.writeFile({
-                path: 'EchoAppData/database.json',
-                data: JSON.stringify(db),
-                directory: 'DATA',
-                encoding: 'utf8'
-            });
+            try { await Filesystem.mkdir({ path: 'EchoAppData', directory: 'DATA', recursive: true }); } catch (e) {}
+            await Filesystem.writeFile({ path: 'EchoAppData/database.json', data: JSON.stringify(db), directory: 'DATA', encoding: 'utf8' });
         } else {
             localStorage.setItem('WangShiShuJia_DB', JSON.stringify(db));
         }
@@ -36,13 +31,10 @@ async function saveToLocal() {
 }
 
 async function saveMediaToDisk(base64Data, type) {
-    if (!window.Capacitor || !window.Capacitor.isNativePlatform()) {
-        return base64Data; 
-    }
+    if (!window.Capacitor || !window.Capacitor.isNativePlatform()) return base64Data; 
     const Filesystem = Capacitor.Plugins.Filesystem;
     const timestamp = Date.now();
-    let folder = '';
-    let ext = '';
+    let folder = '', ext = '';
 
     if (type === 'image') { folder = 'Images'; ext = 'jpg'; } 
     else if (type === 'video') { folder = 'Videos'; ext = 'mp4'; } 
@@ -53,40 +45,22 @@ async function saveMediaToDisk(base64Data, type) {
     const base64Content = base64Data.split(',')[1];
 
     try {
-        const result = await Filesystem.writeFile({
-            path: path,
-            data: base64Content,
-            directory: 'DATA'
-        });
+        const result = await Filesystem.writeFile({ path: path, data: base64Content, directory: 'DATA' });
         return Capacitor.convertFileSrc(result.uri);
     } catch (e) {
-        console.error("文件落盘失败，已降级回 Base64", e);
         return base64Data; 
     }
 }
 
-async function startRecording() {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        return alert("⚠️ 你的设备环境不支持录音功能。");
-    }
-
+async function startRecording() { 
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return alert("⚠️ 不支持录音。");
     let stream;
-    try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (err) {
-        try {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } catch (retryErr) {
-            return alert("⚠️ 录音权限被拒绝或被系统占用。\n错误代码: " + retryErr.name);
-        }
-    }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (err) { return alert("⚠️ 录音权限被拒绝。"); }
 
     try {
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-        
         mediaRecorder.onstop = () => {
             const reader = new FileReader();
             const finalDuration = recordSeconds;
@@ -97,6 +71,7 @@ async function startRecording() {
                 if (!isRecordingCancelled) {
                     const localUrl = await saveMediaToDisk(e.target.result, 'voice');
                     document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', localUrl, finalDuration, recordTime));
+                    isEditorDirty = true; 
                 }
                 isRecordingCancelled = false; 
             };
@@ -105,202 +80,134 @@ async function startRecording() {
         };
 
         document.getElementById('recordingModal').classList.remove('hidden'); 
-        recordSeconds = 0; 
-        document.getElementById('recordTimeDisplay').innerText = "00:00";
+        recordSeconds = 0; document.getElementById('recordTimeDisplay').innerText = "00:00";
         mediaRecorder.start(); 
         
         recordTimer = setInterval(() => {
-            recordSeconds++; 
-            document.getElementById('recordTimeDisplay').innerText = `00:${String(recordSeconds).padStart(2, '0')}`;
+            recordSeconds++; document.getElementById('recordTimeDisplay').innerText = `00:${String(recordSeconds).padStart(2, '0')}`;
             if (recordSeconds >= 60) stopRecording();
         }, 1000);
-
-    } catch (err) {
-        alert("⚠️ 录音引擎初始化失败：" + err.message);
-    }
+    } catch (err) { alert("⚠️ 录音失败：" + err.message); }
 }
+function stopRecording() { if (mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.stop(); clearInterval(recordTimer); document.getElementById('recordingModal').classList.add('hidden'); } }
+function cancelRecording() { isRecordingCancelled = true; stopRecording(); }
 
-function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop(); clearInterval(recordTimer);
-        document.getElementById('recordingModal').classList.add('hidden');
-    }
-}
-
-function cancelRecording() {
-    isRecordingCancelled = true; 
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop(); 
-        clearInterval(recordTimer);
-        document.getElementById('recordingModal').classList.add('hidden');
-    }
-}
-
-function toggleSidebar() {
-    const sidebar = document.getElementById('sidebar');
-    if (sidebar.classList.contains('-translate-x-full')) openSidebar();
-    else closeSidebar();
-}
-
+function toggleSidebar() { const sidebar = document.getElementById('sidebar'); sidebar.classList.contains('-translate-x-full') ? openSidebar() : closeSidebar(); }
 function openSidebar() {
     let totalDays = 0;
     for(let y in db) { for(let m in db[y]) { totalDays += new Set(db[y][m].map(e => e.day)).size; } }
     document.getElementById('statDays').innerText = totalDays;
-    const icons = ['🐱','🐶','🌻','🌿','☕','🏕️','🚲','🌅','🍀','🧸'];
-    document.getElementById('drawerHeaderIcon').innerText = icons[Math.floor(Math.random() * icons.length)];
     document.getElementById('sidebar').classList.remove('-translate-x-full');
     document.getElementById('sidebarOverlay').classList.remove('hidden');
 }
-
-function closeSidebar() {
-    document.getElementById('sidebar').classList.add('-translate-x-full');
-    document.getElementById('sidebarOverlay').classList.add('hidden');
-}
+function closeSidebar() { document.getElementById('sidebar').classList.add('-translate-x-full'); document.getElementById('sidebarOverlay').classList.add('hidden'); }
 
 function exportToPDF() {
     document.getElementById('loadingOverlay').classList.remove('hidden');
     const element = document.getElementById('printable-area');
     const navBar = element.querySelector('.sticky');
     if(navBar) navBar.classList.add('hidden');
-    html2pdf().set({ margin: 10, filename: `往事书架.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(element).save().then(() => {
+    
+    const fab = element.querySelector('.fixed.bottom-8');
+    if(fab) fab.classList.add('hidden');
+
+    html2pdf().set({ margin: 10, filename: `回响导出.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(element).save().then(() => {
         if(navBar) navBar.classList.remove('hidden');
+        if(fab) fab.classList.remove('hidden');
         document.getElementById('loadingOverlay').classList.add('hidden');
-    }).catch(err => {
-        alert("生成PDF失败");
+        toggleArticleMenu(); 
+    }).catch(() => {
         if(navBar) navBar.classList.remove('hidden');
+        if(fab) fab.classList.remove('hidden');
         document.getElementById('loadingOverlay').classList.add('hidden');
+        toggleArticleMenu();
     });
 }
 
 function openLocationModal() { document.getElementById('locationModal').classList.remove('hidden'); }
 function closeLocationModal() { document.getElementById('locationModal').classList.add('hidden'); }
-
 function simplifyAddress(components) {
     let city = components.city && typeof components.city === 'string' ? components.city : components.province;
     let district = components.district || components.township || "";
-    city = city.replace(/省|市/g, '');
-    district = district.replace(/区|街道|镇|乡/g, '');
-    return city + district;
+    return city.replace(/省|市/g, '') + district.replace(/区|街道|镇|乡/g, '');
 }
 
 async function getLocationFromDevice() {
-    const title = document.getElementById('locationModalTitle');
-    const oldTitle = title.innerText;
-    title.innerText = "卫星连接中...";
-
+    const title = document.getElementById('locationModalTitle'); const oldTitle = title.innerText; title.innerText = "卫星连接中...";
     let isResolved = false;
-    const timeoutSafeLock = setTimeout(() => {
-        if (!isResolved) {
-            isResolved = true;
-            title.innerText = oldTitle;
-            closeLocationModal();
-            alert("⚠️ 定位超时（请检查网络或是否开启了手机GPS服务）");
-        }
-    }, 10000);
-
+    const timeoutSafeLock = setTimeout(() => { if (!isResolved) { isResolved = true; title.innerText = oldTitle; closeLocationModal(); alert("⚠️ 定位超时"); } }, 10000);
     try {
         let lat, lon;
-
         if (window.Capacitor && window.Capacitor.isNativePlatform()) {
             const Geolocation = Capacitor.Plugins.Geolocation;
             const permission = await Geolocation.requestPermissions();
-            if (permission.location !== 'granted') {
-                clearTimeout(timeoutSafeLock); isResolved = true;
-                title.innerText = oldTitle;
-                return alert("⚠️ 你拒绝了定位权限，无法获取位置。");
-            }
-
+            if (permission.location !== 'granted') { clearTimeout(timeoutSafeLock); isResolved = true; title.innerText = oldTitle; return alert("⚠️ 拒绝定位"); }
             let position;
-            try {
-                position = await Geolocation.getCurrentPosition({
-                    enableHighAccuracy: true,
-                    timeout: 4000,
-                    maximumAge: 30000 
-                });
-            } catch (highAccErr) {
-                console.log("高精度获取失败，降级为基站/Wi-Fi粗略定位...");
-                position = await Geolocation.getCurrentPosition({
-                    enableHighAccuracy: false, 
-                    timeout: 5000,
-                    maximumAge: 300000 
-                });
-            }
-            lat = position.coords.latitude;
-            lon = position.coords.longitude;
+            try { position = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 4000, maximumAge: 30000 }); } 
+            catch (e) { position = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }); }
+            lat = position.coords.latitude; lon = position.coords.longitude;
         } else {
-            await new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(
-                    pos => { lat = pos.coords.latitude; lon = pos.coords.longitude; resolve(); },
-                    err => reject(err),
-                    { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-                );
-            });
+            await new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition(pos => { lat = pos.coords.latitude; lon = pos.coords.longitude; resolve(); }, err => reject(err), { enableHighAccuracy: true, timeout: 8000 }); });
         }
-
         if (typeof AMap !== 'undefined') {
             AMap.plugin('AMap.Geocoder', function() {
                 var geocoder = new AMap.Geocoder({ city: "010" });
                 geocoder.getAddress([lon, lat], function(status, result) {
-                if (status === 'complete' && result.regeocode) {
-                    editorMeta.location = simplifyAddress(result.regeocode.addressComponent);
-                } else {
-                    editorMeta.location = `东经${lon.toFixed(2)} 北纬${lat.toFixed(2)}`;
-                }
-                finalizeLocation(oldTitle);
-            });
+                    editorMeta.location = (status === 'complete' && result.regeocode) ? simplifyAddress(result.regeocode.addressComponent) : `E${lon.toFixed(2)} N${lat.toFixed(2)}`;
+                    isEditorDirty = true;
+                    finalizeLocation(oldTitle);
+                });
             });
         } else {
-            if (isResolved) return;
-            clearTimeout(timeoutSafeLock); isResolved = true;
+            if (isResolved) return; clearTimeout(timeoutSafeLock); isResolved = true;
             editorMeta.location = `东经${lon.toFixed(2)} 北纬${lat.toFixed(2)}`;
-            title.innerText = oldTitle;
-            closeLocationModal();
-            render();
+            isEditorDirty = true;
+            finalizeLocation(oldTitle);
         }
-
-    } catch (error) {
-        if (isResolved) return;
-        clearTimeout(timeoutSafeLock); isResolved = true;
-        console.error(error);
-        alert("⚠️ 定位失败: " + error.message);
-        title.innerText = oldTitle;
-    }
+    } catch (error) { if (isResolved) return; clearTimeout(timeoutSafeLock); isResolved = true; alert("⚠️ 定位失败: " + error.message); title.innerText = oldTitle; }
 }
 
-function finalizeLocation(oldTitle) {
-    document.getElementById('locationModalTitle').innerText = oldTitle;
-    closeLocationModal();
-    render();
+// 🌟 新增：局部更新 DOM，绝不抹除用户画布文本！
+function updateLocationDOM() {
+    const ld = document.getElementById('locDisplay');
+    if (ld) ld.innerText = editorMeta.location || '定位';
+    const ald = document.getElementById('articleLocDisplay');
+    if (ald) ald.innerText = editorMeta.location || '(无位置信息)';
 }
 
-function setCustomLocation() {
-    const input = document.getElementById('customLocationInput');
-    if (input.value.trim() !== '') {
-        editorMeta.location = input.value.trim();
-        input.value = '';
-        closeLocationModal();
-        render();
-    }
+function updateDateDOM() {
+    const entryD = new Date(editorMeta.date);
+    const mm = entryD.getMonth() + 1, dd = entryD.getDate();
+    const hrs = String(entryD.getHours()).padStart(2, '0'), mins = String(entryD.getMinutes()).padStart(2, '0');
+    const wd = ['周日','周一','周二','周三','周四','周五','周六'][entryD.getDay()];
+    const today = new Date(); const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+    let relativeDay = '';
+    if (entryD.toDateString() === today.toDateString()) relativeDay = '今天';
+    else if (entryD.toDateString() === yesterday.toDateString()) relativeDay = '昨天';
+    const dateStr = `${mm}月${dd}日 / ${hrs}:${mins} ${wd} ${relativeDay}`.trim();
+
+    const display = document.getElementById('topBarDateDisplay');
+    if (display) display.innerText = dateStr;
 }
 
-function clearLocation() {
-    editorMeta.location = '';
-    closeLocationModal();
-    render();
-}
-
+function finalizeLocation(oldTitle) { document.getElementById('locationModalTitle').innerText = oldTitle; closeLocationModal(); updateLocationDOM(); }
+function setCustomLocation() { const input = document.getElementById('customLocationInput'); if (input.value.trim()) { editorMeta.location = input.value.trim(); isEditorDirty = true; input.value = ''; closeLocationModal(); updateLocationDOM(); } }
+function clearLocation() { editorMeta.location = ''; isEditorDirty = true; closeLocationModal(); updateLocationDOM(); }
 function openWeatherModal() { document.getElementById('weatherModal').classList.remove('hidden'); }
 function closeWeatherModal() { document.getElementById('weatherModal').classList.add('hidden'); }
-function selectWeather(w) { editorMeta.weather = w; closeWeatherModal(); render(); }
 
-function goToSettings() {
-    closeSidebar();
-    historyStack.push({...state});
-    state.level = 'settings';
-    render();
+// 🌟 新增：局部更新天气
+function selectWeather(w) { 
+    editorMeta.weather = w; isEditorDirty = true; closeWeatherModal(); 
+    const wd = document.getElementById('weatherDisplay');
+    if (wd) wd.innerText = w || '🌤️ 天气';
+    const awd = document.getElementById('articleWeatherDisplay');
+    if (awd) awd.innerText = w || '(无天气信息)';
 }
 
-// 🌟 核心渲染引擎
+function goToSettings() { closeSidebar(); historyStack.push({...state}); state.level = 'settings'; render(); }
+
+// 🌟 核心渲染引擎 (已恢复核心开发者署名)
 function render() {
     const app = document.getElementById('app');
     
@@ -347,7 +254,6 @@ function render() {
                     </button>
                     <div class="text-right">
                         <h1 class="text-2xl font-serif font-bold text-stone-800">${state.year} 卷</h1>
-                        <p class="text-[10px] text-stone-400 mt-1 uppercase tracking-widest">月份页面</p>
                     </div>
                 </div>
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-5 mt-4">${monthsHtml}</div>
@@ -372,7 +278,6 @@ function render() {
                     </button>
                     <div class="text-right">
                         <h1 class="text-2xl font-serif font-bold text-stone-800">${state.year}年 <span class="text-cyan-600">${state.month}月</span></h1>
-                        <p class="text-[10px] text-stone-400 mt-1 uppercase tracking-widest">日期页面</p>
                     </div>
                 </div>
                 <div class="space-y-2 mt-2">${daysHtml}</div>
@@ -386,29 +291,62 @@ function render() {
 
         dayEntries.sort((a, b) => b.timeStr.localeCompare(a.timeStr));
 
-        let entriesHtml = dayEntries.map(entry => `
-            <div class="mb-12">
-                <div class="flex justify-between items-end mb-3 px-2 no-print">
-                    <span class="text-xs text-stone-400 font-bold tracking-widest uppercase">手账记录</span>
-                    <div class="flex gap-4">
-                        <button onclick="editEntry('${entry.id}')" class="text-xs text-stone-400 hover:text-cyan-600 font-bold">编辑</button>
-                        <button onclick="deleteEntry('${entry.id}')" class="text-xs text-stone-400 hover:text-rose-500 font-bold">删除</button>
+        let entriesHtml = dayEntries.map(entry => {
+            if (entry.isArticleMode) {
+                let coverImageHtml = '';
+                const imgMatch = entry.html.match(/<img[^>]+src=["']([^"']+)["']/i);
+                if (imgMatch && imgMatch[1]) {
+                    coverImageHtml = `<img src="${imgMatch[1]}" class="w-full h-48 object-cover border-b border-stone-100">`;
+                }
+
+                let tempDiv = document.createElement('div');
+                tempDiv.innerHTML = entry.html;
+                tempDiv.querySelectorAll('img, video, audio').forEach(el => el.remove());
+                let plainText = tempDiv.innerText.trim();
+
+                const entryD = new Date(entry.fullDateStr.replace(' ', 'T'));
+                const wd = ['周日','周一','周二','周三','周四','周五','周六'][entryD.getDay()];
+                const dateDisplay = `${entryD.getMonth() + 1}月${entryD.getDate()}日 ${wd}`;
+
+                return `
+                <div class="mb-8 bg-white rounded-[10px] shadow-[0_2px_15px_-4px_rgba(0,0,0,0.08)] border border-stone-100 cursor-pointer overflow-hidden transition-all hover:shadow-md hover:-translate-y-1" onclick="openArticle('${entry.id}')">
+                    ${coverImageHtml}
+                    <div class="p-5">
+                        <div class="flex justify-between items-center mb-3 text-[11px] text-stone-400 font-medium tracking-wide">
+                            <span>${dateDisplay}</span>
+                        </div>
+                        ${entry.title ? `<h3 class="text-lg font-bold text-stone-800 mb-2 tracking-wide">《${entry.title}》</h3>` : ''}
+                        <div class="text-sm text-stone-700 line-clamp-3 leading-relaxed indent-7 mb-3">
+                            ${plainText}
+                        </div>
+                        <div class="text-right text-[10px] text-stone-300 font-mono">
+                            ${entry.timeStr}
+                        </div>
                     </div>
-                </div>
-                <div class="read-only-mode ${(entry.html.includes('<img') || entry.html.includes('<video')) ? 'journal-bg' : 'bg-[#faf9f6]'} p-6 rounded-t-3xl shadow-sm border border-stone-200 border-b-0 transition-colors duration-300">
-                    ${entry.html}
-                </div>
-                <div class="bg-white p-4 rounded-b-3xl border border-stone-200 shadow-sm flex flex-col sm:flex-row justify-between sm:items-center text-xs text-stone-400 gap-3">
-                    <div class="flex items-center gap-2 font-mono font-bold text-stone-500">
-                        <span class="text-base">🕒</span> <span>${entry.fullDateStr || entry.timeStr}</span>
+                </div>`;
+            } else {
+                return `
+                <div class="mb-12">
+                    <div class="flex justify-between items-end mb-3 px-2 no-print">
+                        <span class="text-[10px] text-stone-400 font-bold tracking-widest bg-stone-100 px-2 py-0.5 rounded">📓 手账碎片</span>
+                        <div class="flex gap-4">
+                            <button onclick="editEntry('${entry.id}')" class="text-xs text-stone-400 hover:text-cyan-600 font-bold">编辑</button>
+                            <button onclick="deleteEntry('${entry.id}')" class="text-xs text-stone-400 hover:text-rose-500 font-bold">删除</button>
+                        </div>
                     </div>
-                    <div class="flex flex-wrap gap-4 items-center font-medium">
-                        <div class="flex items-center gap-1"><span class="text-base">📍</span> <span class="truncate max-w-[100px]">${entry.location || '无定位'}</span></div>
-                        <div class="flex items-center gap-1"><span>${entry.weather || '🌤️ 无天气'}</span></div>
-                        <div class="border-l border-stone-200 pl-4 font-bold text-stone-500">字数：${entry.wordCount || 0} 字</div>
+                    <div class="read-only-mode ${(entry.html.includes('<img') || entry.html.includes('<video')) ? 'journal-bg' : 'bg-white'} p-6 rounded-t-3xl shadow-sm border border-stone-200 border-b-0 transition-colors duration-300">
+                        ${entry.html}
                     </div>
-                </div>
-            </div>`).join('');
+                    <div class="bg-stone-50 p-4 rounded-b-3xl border border-stone-200 shadow-sm flex flex-col sm:flex-row justify-between sm:items-center text-xs text-stone-400 gap-3">
+                        <div class="flex items-center gap-2 font-mono font-bold text-stone-500"><span class="text-base">🕒</span> <span>${entry.fullDateStr || entry.timeStr}</span></div>
+                        <div class="flex flex-wrap gap-4 items-center font-medium">
+                            ${entry.location ? `<div class="flex items-center gap-1"><span class="text-base">📍</span> <span class="truncate max-w-[100px]">${entry.location}</span></div>` : ''}
+                            ${entry.weather ? `<div class="flex items-center gap-1"><span>${entry.weather}</span></div>` : ''}
+                        </div>
+                    </div>
+                </div>`;
+            }
+        }).join('');
 
         app.innerHTML = `
             <div class="p-6 h-full overflow-y-auto pb-32 bg-stone-50" id="printable-area">
@@ -419,46 +357,171 @@ function render() {
                         </button>
                         <h1 class="text-xl font-serif font-bold text-stone-700">${state.month}月${state.day}日</h1>
                     </div>
-                    <button onclick="exportToPDF()" class="flex items-center gap-2 text-sm bg-cyan-600 text-white px-3 py-2 rounded-full shadow-md hover:bg-cyan-500 font-bold tracking-wider">
-                        <span></span> 导出PDF
-                    </button>
                 </div>
-                <h1 class="hidden print:block text-3xl font-serif font-bold text-center mb-10 border-b-2 border-stone-800 pb-4 mx-4 mt-8">${state.year}年 ${state.month}月${state.day}日 手账归档</h1>
                 <div class="px-2 sm:px-0">${entriesHtml}</div>
             </div>
             ${renderAddButton()}
         `;
     }
-    // 🌟 核心：注入长文本文章排版的 Editor 界面
-    else if (state.level === 'editor') {
+    else if (state.level === 'articleView') {
+        const entry = db[state.year][state.month].find(x => x.id === state.currentArticleId);
+        if (!entry) return goBack('day');
+        
+        const entryDate = new Date(entry.fullDateStr.replace(' ', 'T'));
+        const weekDays = ['周日','周一','周二','周三','周四','周五','周六'];
+        
         app.innerHTML = `
-            <div class="flex flex-col h-full journal-bg relative">
+            <div class="h-full bg-[#faf9f6] flex flex-col relative overflow-y-auto" id="printable-area">
                 
-                <div id="articlePrompt" class="hidden absolute top-16 left-1/2 -translate-x-1/2 bg-cyan-600/95 backdrop-blur text-white px-5 py-2.5 rounded-full shadow-lg z-50 text-xs font-bold flex items-center gap-3 animate-bounce">
-                    <span>字数超66啦，要切成排版更好的文章模式吗？</span>
-                    <button onclick="toggleArticleMode()" class="bg-white text-cyan-600 px-3 py-1.5 rounded-full shadow-sm active:scale-95 transition-transform">切换</button>
-                    <button onclick="document.getElementById('articlePrompt').classList.add('hidden')" class="text-cyan-200 ml-1 text-base">✕</button>
+                <div class="flex items-center justify-between p-4 sticky top-0 bg-[#faf9f6]/95 backdrop-blur z-20 no-print border-b border-stone-100">
+                    <button onclick="goBack('day')" class="text-stone-500 hover:text-stone-800 active:scale-90 transition-transform">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    </button>
+                    
+                    <div class="flex items-center gap-5 text-stone-500 relative">
+                        <button onclick="shareArticle('${entry.id}')" title="分享" class="hover:text-stone-800 active:scale-90 transition-transform">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"></path></svg>
+                        </button>
+                        <button onclick="copyArticle('${entry.id}')" title="复制文本" class="hover:text-stone-800 active:scale-90 transition-transform">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                        <button onclick="toggleArticleMenu()" title="更多选项" class="hover:text-stone-800 active:scale-90 transition-transform relative">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z"></path></svg>
+                        </button>
+                        
+                        <div id="articleMoreMenu" class="hidden absolute right-0 top-10 w-32 bg-white rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] border border-stone-100 overflow-hidden z-50 text-[13px] font-bold text-stone-600">
+                            <div onclick="showArticleDetails('${entry.id}')" class="px-5 py-3.5 hover:bg-stone-50 hover:text-cyan-600 cursor-pointer border-b border-stone-50">详细</div>
+                            <div onclick="exportArticleTXT('${entry.id}')" class="px-5 py-3.5 hover:bg-stone-50 hover:text-cyan-600 cursor-pointer border-b border-stone-50">导出 TXT</div>
+                            <div onclick="exportToPDF()" class="px-5 py-3.5 hover:bg-stone-50 hover:text-cyan-600 cursor-pointer border-b border-stone-50">导出 PDF</div>
+                            <div onclick="if(confirm('确认删除这篇文章？\\n(此操作不可逆)')) { deleteEntry('${entry.id}'); goBack('day'); }" class="px-5 py-3.5 hover:bg-rose-50 text-rose-500 cursor-pointer">删除文章</div>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="flex justify-between items-center p-4 bg-white/80 backdrop-blur-md border-b border-stone-200 sticky top-0 z-20 no-print">
-                    <button onclick="cancelEdit()" class="text-stone-400 font-bold hover:text-stone-600">取消</button>
-                    <span class="font-serif font-bold text-stone-700 text-sm tracking-widest">${state.editingId ? '修改手账' : '新的一页'}</span>
+                <div class="px-6 pb-32 pt-2">
+                    <div class="flex items-center gap-4 mb-8 text-stone-400 border-b border-stone-100 pb-5">
+                        <div class="text-5xl font-light text-stone-500">${entryDate.getDate()}</div>
+                        <div class="flex flex-col text-[10px] font-medium leading-tight">
+                            <div>${entryDate.getMonth() + 1}月 / ${weekDays[entryDate.getDay()]}</div>
+                            <div>${entry.timeStr}</div>
+                        </div>
+                    </div>
+                    ${entry.title ? `<h1 class="text-xl font-bold text-stone-800 mb-6 tracking-wide">《${entry.title}》</h1>` : ''}
+                    <div class="read-only-mode article-content text-stone-700 leading-loose">${entry.html}</div>
+                </div>
+
+                <div class="fixed bottom-8 right-8 z-40 no-print">
+                    <button onclick="editEntry('${entry.id}')" class="bg-[#3ebcb5] text-white w-14 h-14 rounded-full shadow-[0_4px_15px_rgba(62,188,181,0.4)] flex items-center justify-center hover:scale-105 active:scale-95 transition-transform">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    else if (state.level === 'editor') {
+        const isArticle = editorMeta.isArticleMode;
+        
+        let topBarHtml = '';
+        if (isArticle) {
+            const entryD = new Date(editorMeta.date);
+            const mm = entryD.getMonth() + 1, dd = entryD.getDate();
+            const hrs = String(entryD.getHours()).padStart(2, '0'), mins = String(entryD.getMinutes()).padStart(2, '0');
+            const weekDays = ['周日','周一','周二','周三','周四','周五','周六'], wd = weekDays[entryD.getDay()];
+            
+            const today = new Date(); const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+            let relativeDay = '';
+            if (entryD.toDateString() === today.toDateString()) relativeDay = '今天';
+            else if (entryD.toDateString() === yesterday.toDateString()) relativeDay = '昨天';
+            
+            const dateStr = `${mm}月${dd}日 / ${hrs}:${mins} ${wd} ${relativeDay}`.trim();
+
+            topBarHtml = `
+                <div class="flex justify-between items-center p-3 bg-[#faf9f6]/95 backdrop-blur-md sticky top-0 z-20 no-print border-b border-stone-200">
+                    <div class="flex items-center gap-4">
+                        <button onclick="saveJournal()" class="text-stone-500 hover:text-stone-800 active:scale-90 transition-transform" title="完成并保存">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" /></svg>
+                        </button>
+                        <div class="relative cursor-pointer hover:text-stone-800 text-stone-700 flex items-center">
+                            <span id="topBarDateDisplay" class="text-sm font-bold tracking-wide">${dateStr}</span>
+                            <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value); updateDateDOM(); isEditorDirty = true;" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4 text-stone-400">
+                        <button class="hover:text-stone-600 active:scale-90 transition-transform">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M6 3a2 2 0 00-2 2v14a1 1 0 001.5.864l4.5-2.5 4.5 2.5A1 1 0 0016 19V5a2 2 0 00-2-2H6z" clip-rule="evenodd" /></svg>
+                        </button>
+                        <button class="hover:text-stone-600 active:scale-90 transition-transform">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" /></svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+        } else {
+            topBarHtml = `
+                <div class="flex justify-between items-center p-4 bg-white/80 backdrop-blur-md sticky top-0 z-20 no-print">
+                    <button onclick="attemptCancelEdit()" class="text-stone-400 font-bold hover:text-stone-600">取消</button>
+                    <span class="font-serif font-bold text-stone-700 text-sm tracking-widest">${state.editingId ? '修改' : '新建'}手账</span>
                     <button onclick="saveJournal()" class="bg-cyan-600 text-white px-6 py-1.5 rounded-full text-sm font-bold shadow-md hover:bg-cyan-500 active:scale-95 transition-transform">保存</button>
                 </div>
+            `;
+        }
 
-                <div id="journal-canvas" class="flex-1 p-6 pb-40 overflow-y-auto space-y-2" onkeyup="calculateWordCount()"></div>
+        let contentHtml = '';
+        if (isArticle) {
+            contentHtml = `
+                <div class="flex-1 p-6 pb-20 overflow-y-auto relative flex flex-col">
+                    <input type="text" id="articleTitleInput" placeholder="《请输入文章标题》" value="${editorMeta.title || ''}" class="w-full text-xl font-bold text-stone-800 bg-transparent border-none outline-none mb-6 placeholder-stone-300 tracking-wider mt-2 flex-shrink-0" oninput="editorMeta.title = this.value; isEditorDirty = true;">
+                    
+                    <div id="article-canvas" contenteditable="true" class="w-full min-h-[40vh] outline-none text-stone-700 text-base leading-loose mb-10" 
+                         placeholder="从这里开始撰写..." 
+                         onkeyup="calculateWordCount(); saveCursorPosition();" 
+                         onmouseup="saveCursorPosition()" 
+                         oninput="calculateWordCount(); isEditorDirty = true;"></div>
+                         
+                    <div class="mt-auto pt-8 pb-4 flex flex-col gap-4 text-stone-400 text-[13px] font-medium tracking-wider select-none no-print">
+                        
+                        <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openWeatherModal()">
+                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-2.25l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
+                            <span id="articleWeatherDisplay">${editorMeta.weather || '(无天气信息)'}</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openLocationModal()">
+                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
+                            <span id="articleLocDisplay">${editorMeta.location || '(无位置信息)'}</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>
+                            <span>${editorMeta.device || 'Echo 客户端'}</span>
+                        </div>
+                        
+                        <div class="flex items-center gap-3">
+                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+                            <span id="articleWordCountDisplay">${editorMeta.wordCount} 字</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            contentHtml = `
+                <div class="flex-1 p-6 pb-40 overflow-y-auto space-y-2" onkeyup="calculateWordCount()">
+                    <div id="journal-canvas" class="space-y-2"></div>
+                </div>
+            `;
+        }
 
+        let bottomBarsHtml = '';
+        if (!isArticle) {
+            bottomBarsHtml = `
                 <div class="absolute bottom-[68px] left-0 w-full bg-white/95 backdrop-blur-sm border-t border-stone-200 p-2.5 flex justify-between items-center text-[11px] text-stone-500 z-10 shadow-[0_-5px_15px_rgba(0,0,0,0.02)] no-print">
                     <div class="relative flex items-center justify-center gap-1 cursor-pointer hover:text-cyan-600 transition-colors w-1/4">
-                        <span>🕒</span>
-                        <span class="text-stone-400 truncate">时间</span>
-                        <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value)" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
+                        <span>🕒</span><span class="text-stone-400 truncate">时间</span>
+                        <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value); render(); isEditorDirty = true;" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
                     </div>
                     <div class="w-px h-4 bg-stone-200 flex-shrink-0"></div>
                     <div onclick="openLocationModal()" class="flex items-center justify-center cursor-pointer hover:text-cyan-600 transition-colors w-1/4 px-1">
-                        <div class="flex items-center gap-1 truncate">
-                            <span>📍</span> <span id="locDisplay" class="truncate">${editorMeta.location || '定位'}</span>
-                        </div>
+                        <div class="flex items-center gap-1 truncate"><span>📍</span> <span id="locDisplay" class="truncate">${editorMeta.location || '定位'}</span></div>
                     </div>
                     <div class="w-px h-4 bg-stone-200 flex-shrink-0"></div>
                     <div onclick="openWeatherModal()" class="flex items-center justify-center cursor-pointer hover:text-cyan-600 transition-colors w-1/4 px-1">
@@ -471,42 +534,90 @@ function render() {
                 </div>
 
                 <div class="absolute bottom-0 left-0 w-full bg-white border-t border-stone-100 p-3 flex justify-around z-20 no-print">
-                    <button onclick="addBlock('text')" class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 transition-colors">
-                        <span class="text-xl">✍️</span><span class="text-[10px] font-bold">文字</span>
+                    <button onclick="addBlock('text')" class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 transition-colors"><span class="text-xl">✍️</span><span class="text-[10px] font-bold">文字</span></button>
+                    <label class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 cursor-pointer transition-colors"><span class="text-xl">🖼️</span><span class="text-[10px] font-bold">图片</span><input type="file" accept="image/*" class="hidden" onchange="addBlock('image', event)"></label>
+                    <label class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 cursor-pointer transition-colors"><span class="text-xl">🎥</span><span class="text-[10px] font-bold">视频</span><input type="file" accept="video/*" class="hidden" onchange="addBlock('video', event)"></label>
+                    <button onclick="startRecording()" class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 transition-colors"><span class="text-xl">🎙️</span><span class="text-[10px] font-bold">语音</span></button>
+                </div>
+            `;
+        } else {
+            bottomBarsHtml = `
+                <div class="absolute bottom-0 left-0 w-full bg-[#faf9f6] border-t border-stone-200 p-3 flex justify-around items-center z-20 no-print text-stone-500">
+                    <button onclick="applyIndent()" class="p-2 active:scale-95 transition-transform" title="首行缩进">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M7.5 12h12m-12 5.25h12M3.75 12l2.25 2.25L3.75 16.5" />
+                        </svg>
                     </button>
-                    <label class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 cursor-pointer transition-colors">
-                        <span class="text-xl">🖼️</span><span class="text-[10px] font-bold">图片</span>
-                        <input type="file" accept="image/*" class="hidden" onchange="addBlock('image', event)">
-                    </label>
-                    <label class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 cursor-pointer transition-colors">
-                        <span class="text-xl">🎥</span><span class="text-[10px] font-bold">视频</span>
-                        <input type="file" accept="video/*" class="hidden" onchange="addBlock('video', event)">
-                    </label>
-                    <button onclick="startRecording()" class="flex flex-col items-center gap-1 text-stone-400 hover:text-cyan-600 transition-colors">
-                        <span class="text-xl">🎙️</span><span class="text-[10px] font-bold">语音</span>
+                    <button onclick="alert('创建项目编号功能开发中...')" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="项目标题">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5l-3.9 19.5m-2.1-19.5l-3.9 19.5" /></svg>
                     </button>
+                    <button onclick="alert('列表编号排版开发中...')" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="无序列表">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.008v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.008v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.008v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                    </button>
+                    <label class="p-2 hover:text-cyan-600 active:scale-95 transition-all cursor-pointer" title="插入图片">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                        <input type="file" accept="image/*" class="hidden" onchange="insertArticleImage(event)">
+                    </label>
+                </div>
+            `;
+        }
+
+        let unsavedModalHtml = `
+            <div id="unsavedChangesModal" class="hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-[110] flex items-center justify-center animate-fade-in" onclick="closeUnsavedModal()">
+                <div class="bg-white w-[85%] max-w-sm rounded-lg shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
+                    <div class="p-6 pb-8">
+                        <h3 class="text-lg font-bold text-stone-800 mb-3">提示</h3>
+                        <p class="text-stone-600 text-[15px]">确定放弃此次编辑？</p>
+                    </div>
+                    <div class="flex pt-2 pb-4 px-2">
+                        <button onclick="confirmDiscard()" class="flex-1 py-2 text-cyan-600 font-medium hover:bg-stone-50 transition-colors rounded">放弃</button>
+                        <button onclick="closeUnsavedModal()" class="flex-1 py-2 text-cyan-600 font-medium hover:bg-stone-50 transition-colors rounded">取消</button>
+                        <button onclick="confirmSave()" class="flex-1 py-2 text-cyan-600 font-medium hover:bg-stone-50 transition-colors rounded">保存</button>
+                    </div>
                 </div>
             </div>
         `;
 
-        const canvas = document.getElementById('journal-canvas');
+        app.innerHTML = `
+            <div class="flex flex-col h-full ${isArticle ? 'bg-[#faf9f6]' : 'journal-bg'} relative">
+                
+                <div id="articlePrompt" class="hidden absolute top-16 left-1/2 -translate-x-1/2 bg-cyan-600/95 backdrop-blur text-white px-5 py-2.5 rounded-full shadow-lg z-50 text-xs font-bold flex items-center gap-3 animate-bounce">
+                    <span>字数超66啦，要切成排版更好的文章模式吗？</span>
+                    <button onclick="toggleArticleMode()" class="bg-white text-cyan-600 px-3 py-1.5 rounded-full shadow-sm active:scale-95 transition-transform">切换</button>
+                    <button onclick="document.getElementById('articlePrompt').classList.add('hidden')" class="text-cyan-200 ml-1 text-base">✕</button>
+                </div>
+
+                ${topBarHtml}
+                ${contentHtml}
+                ${bottomBarsHtml}
+                ${unsavedModalHtml}
+            </div>
+        `;
+
         if (state.editingId) {
             const entry = db[state.year][state.month].find(x => x.id === state.editingId);
-            canvas.innerHTML = entry.html;
-            
-            // 动态重组输入框样式
-            const taStyle = editorMeta.isArticleMode ? 'text-sm indent-8 leading-loose' : 'text-base leading-relaxed';
-            canvas.querySelectorAll('p').forEach(p => {
-                const ta = document.createElement('textarea');
-                ta.className = `w-full bg-transparent border-none resize-none text-stone-700 ${taStyle} placeholder-stone-400`;
-                ta.value = p.innerText;
-                ta.oninput = function() { this.style.height = ''; this.style.height = this.scrollHeight + 'px'; calculateWordCount(); };
-                p.parentNode.replaceChild(ta, p);
-                setTimeout(() => ta.oninput(), 10);
-            });
-            calculateWordCount(); 
+            if (isArticle) {
+                setTimeout(() => {
+                    document.getElementById('article-canvas').innerHTML = entry.html;
+                    calculateWordCount();
+                }, 10);
+            } else {
+                setTimeout(() => {
+                    const canvas = document.getElementById('journal-canvas');
+                    canvas.innerHTML = entry.html;
+                    canvas.querySelectorAll('p').forEach(p => {
+                        const ta = document.createElement('textarea');
+                        ta.className = `w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-400`;
+                        ta.value = p.innerText;
+                        ta.oninput = function() { this.style.height = ''; this.style.height = this.scrollHeight + 'px'; calculateWordCount(); isEditorDirty = true; };
+                        p.parentNode.replaceChild(ta, p);
+                        setTimeout(() => ta.oninput(), 10);
+                    });
+                    calculateWordCount();
+                }, 10);
+            }
         } else {
-            canvas.innerHTML = createBlockHTML('text');
+            if (!isArticle) setTimeout(() => { document.getElementById('journal-canvas').innerHTML = createBlockHTML('text'); }, 10);
         }
     }
     else if (state.level === 'settings') {
@@ -524,10 +635,11 @@ function render() {
                 <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v2.4.1 </p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.0.0</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
+                    <!-- 原汁原味的作者信息回归 -->
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">更新日期</span>
                         <span class="text-stone-400 text-sm font-mono">2026年4月26日</span>
@@ -536,9 +648,23 @@ function render() {
                         <span class="text-stone-500 font-medium">核心开发者</span>
                         <span class="text-stone-400 text-sm">TDYSN</span>
                     </div>
+
+                    <div class="w-full border-t border-stone-100 my-4"></div>
+                    
+                    <!-- 新增的字体排版入口排在下面 -->
+                    <div onclick="alert('字体编辑模块准备就绪，等待你的具体细节需求！')" class="w-full flex justify-between items-center py-4 cursor-pointer hover:bg-stone-50 rounded-xl px-2 -mx-2 transition-colors">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg shadow-inner font-serif">A</div>
+                            <span class="text-stone-700 font-bold">手账排版与字体</span>
+                        </div>
+                        <span class="text-stone-300 font-bold">›</span>
+                    </div>
+
+                    <div class="w-full border-t border-stone-100 my-4"></div>
+                    
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">数据存储</span>
-                        <span class="text-stone-400 text-sm">Echoappdata文件</span>
+                        <span class="text-stone-400 text-sm">Echoappdata文件 (本地沙盒)</span>
                     </div>
                 </div>
             </div>
@@ -546,18 +672,154 @@ function render() {
     }
 }
 
+window.attemptCancelEdit = function() {
+    if (isEditorDirty) {
+        document.getElementById('unsavedChangesModal').classList.remove('hidden');
+    } else {
+        cancelEdit();
+    }
+};
+
+window.confirmDiscard = function() {
+    document.getElementById('unsavedChangesModal').classList.add('hidden');
+    cancelEdit();
+};
+
+window.closeUnsavedModal = function() {
+    document.getElementById('unsavedChangesModal').classList.add('hidden');
+};
+
+window.confirmSave = function() {
+    document.getElementById('unsavedChangesModal').classList.add('hidden');
+    saveJournal();
+};
+
+function getArticlePlainText(id) {
+    const entry = db[state.year][state.month].find(x => x.id === id);
+    let tempDiv = document.createElement('div');
+    tempDiv.innerHTML = entry.html;
+    tempDiv.querySelectorAll('img, video, audio').forEach(el => el.remove());
+    return tempDiv.innerText.trim();
+}
+
+window.copyArticle = function(id) {
+    const entry = db[state.year][state.month].find(x => x.id === id);
+    const text = getArticlePlainText(id);
+    const content = `《${entry.title || '无题'}》\n\n${text}`;
+    navigator.clipboard.writeText(content).then(() => {
+        alert('✅ 文章已复制到剪贴板');
+        toggleArticleMenu(); 
+    }).catch(() => alert('❌ 复制失败，请重试'));
+}
+
+window.shareArticle = function(id) {
+    const entry = db[state.year][state.month].find(x => x.id === id);
+    const text = getArticlePlainText(id);
+    const shareText = `《${entry.title || '无题'}》\n\n${text}`;
+    if (window.Capacitor && Capacitor.Plugins.Share) {
+        Capacitor.Plugins.Share.share({ title: entry.title || '回响文章', text: shareText, dialogTitle: '分享文章' });
+    } else if (navigator.share) {
+        navigator.share({ title: entry.title, text: shareText });
+    } else {
+        alert('⚠️ 当前环境暂不支持直接调用系统分享，请使用“复制文本”功能。');
+    }
+    toggleArticleMenu(); 
+}
+
+window.exportArticleTXT = function(id) {
+    const entry = db[state.year][state.month].find(x => x.id === id);
+    const text = getArticlePlainText(id);
+    const content = `《${entry.title || '无题'}》\n创建时间：${entry.fullDateStr}\n字数统计：${entry.wordCount || 0}字\n\n${text}`;
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${entry.title || '回响文章'}_${entry.day}日.txt`;
+    a.click();
+    toggleArticleMenu(); 
+}
+
+window.showArticleDetails = function(id) {
+    const entry = db[state.year][state.month].find(x => x.id === id);
+    alert(`【文章详细信息】\n\n标题：${entry.title || '无题'}\n字数：${entry.wordCount || 0} 字\n时间：${entry.fullDateStr}\n定位：${entry.location || '未记录'}\n天气：${entry.weather || '未记录'}`);
+    toggleArticleMenu();
+}
+
+window.toggleArticleMenu = function() {
+    const menu = document.getElementById('articleMoreMenu');
+    if (menu) menu.classList.toggle('hidden');
+}
+
+document.addEventListener('click', function(event) {
+    if (!event.target.closest('button[onclick="toggleMenu(this)"]')) document.querySelectorAll('.voice-menu').forEach(menu => menu.classList.add('hidden'));
+    
+    if (!event.target.closest('button[onclick="toggleArticleMenu()"]') && !event.target.closest('#articleMoreMenu')) {
+        const articleMenu = document.getElementById('articleMoreMenu');
+        if (articleMenu) articleMenu.classList.add('hidden');
+    }
+});
+
+
+window.saveCursorPosition = function() {
+    const sel = window.getSelection();
+    if (sel.getRangeAt && sel.rangeCount) savedRange = sel.getRangeAt(0);
+};
+
+window.insertArticleImage = function(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async function(e) { 
+        const localUrl = await saveMediaToDisk(e.target.result, 'image'); 
+        const imgHtml = `<div contenteditable="false" class="py-2 my-2"><img src="${localUrl}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mx-auto block"></div><p><br></p>`;
+        
+        const canvas = document.getElementById('article-canvas');
+        canvas.focus();
+        if (savedRange) {
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(savedRange);
+        }
+        document.execCommand('insertHTML', false, imgHtml);
+        isEditorDirty = true; 
+        calculateWordCount(); 
+    };
+    reader.readAsDataURL(file); 
+    event.target.value = '';
+};
+
+window.applyIndent = function() {
+    const canvas = document.getElementById('article-canvas');
+    canvas.focus();
+    if (savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+    }
+    document.execCommand('insertText', false, '　　');
+    isEditorDirty = true; 
+    saveCursorPosition();
+};
+
 function calculateWordCount() {
-    const canvas = document.getElementById('journal-canvas');
-    if (!canvas) return;
     let totalWords = 0;
-    canvas.querySelectorAll('textarea').forEach(ta => {
-        totalWords += ta.value.trim().length;
-    });
+    if (editorMeta.isArticleMode) {
+        const canvas = document.getElementById('article-canvas');
+        if (canvas) totalWords = canvas.innerText.replace(/\s/g, '').length;
+    } else {
+        const canvas = document.getElementById('journal-canvas');
+        if (canvas) canvas.querySelectorAll('textarea').forEach(ta => { totalWords += ta.value.trim().length; });
+    }
     editorMeta.wordCount = totalWords;
     
     const display = document.getElementById('wordCountDisplay');
     if (display) {
         display.innerHTML = `字数：${totalWords} <span class="ml-1 text-[9px] ${editorMeta.isArticleMode ? 'bg-cyan-100 text-cyan-600' : 'bg-stone-100 text-stone-500'} px-1.5 py-0.5 rounded border border-stone-200/50">${editorMeta.isArticleMode ? '文章' : '短篇'}</span>`;
+    }
+
+    // 同步更新画布底部的字数统计 (如果存在)
+    const articleWordDisplay = document.getElementById('articleWordCountDisplay');
+    if (articleWordDisplay) {
+        articleWordDisplay.innerText = `${totalWords} 字`;
     }
 
     if (totalWords >= 66 && !editorMeta.isArticleMode && !editorMeta.hasPromptedArticle) {
@@ -568,87 +830,98 @@ function calculateWordCount() {
 }
 
 function toggleArticleMode() {
+    const wasArticle = editorMeta.isArticleMode;
     editorMeta.isArticleMode = !editorMeta.isArticleMode;
     editorMeta.hasPromptedArticle = true; 
     
-    const prompt = document.getElementById('articlePrompt');
-    if(prompt) prompt.classList.add('hidden');
-
-    const canvas = document.getElementById('journal-canvas');
-    if(canvas) {
-        canvas.querySelectorAll('textarea').forEach(ta => {
-            if (editorMeta.isArticleMode) {
-                ta.classList.remove('text-base', 'leading-relaxed');
-                ta.classList.add('text-sm', 'indent-8', 'leading-loose');
-            } else {
-                ta.classList.remove('text-sm', 'indent-8', 'leading-loose');
-                ta.classList.add('text-base', 'leading-relaxed');
-            }
-            ta.style.height = ''; ta.style.height = ta.scrollHeight + 'px';
-        });
+    let currentText = '';
+    if (!wasArticle) {
+        const canvas = document.getElementById('journal-canvas');
+        if (canvas) canvas.querySelectorAll('textarea').forEach(ta => { if (ta.value.trim()) currentText += `<p>${ta.value.replace(/\n/g, '<br>')}</p>`; });
+    } else {
+        const canvas = document.getElementById('article-canvas');
+        if (canvas) currentText = canvas.innerText; 
     }
-    calculateWordCount(); 
+    
+    render();
+    setTimeout(() => {
+        if (editorMeta.isArticleMode) document.getElementById('article-canvas').innerHTML = currentText;
+        else { document.getElementById('journal-canvas').innerHTML = createBlockHTML('text'); const ta = document.getElementById('journal-canvas').querySelector('textarea'); if (ta) ta.value = currentText; }
+        calculateWordCount();
+    }, 50);
 }
 
 function renderAddButton() {
     return `
     <div class="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 no-print">
-        <button onclick="goToEditor()" class="bg-cyan-600 text-white w-16 h-16 rounded-full shadow-[0_8px_20px_rgba(8,145,178,0.4)] text-4xl font-light hover:scale-110 hover:bg-cyan-500 transition-all flex items-center justify-center pb-2">+</button>
+        <button onclick="document.getElementById('createMenuModal').classList.remove('hidden')" class="bg-cyan-600 text-white w-16 h-16 rounded-full shadow-[0_8px_20px_rgba(8,145,178,0.4)] text-4xl font-light hover:scale-110 hover:bg-cyan-500 transition-all flex items-center justify-center pb-2">+</button>
+    </div>
+    
+    <div id="createMenuModal" class="hidden fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-end justify-center animate-fade-in" onclick="this.classList.add('hidden')">
+        <div class="bg-white w-full rounded-t-3xl p-6 transform transition-transform shadow-2xl" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-sm font-bold text-stone-500 tracking-widest ml-2">选择记录方式</h3>
+                <button onclick="document.getElementById('createMenuModal').classList.add('hidden')" class="text-stone-400 hover:text-stone-700 bg-stone-100 rounded-full p-1.5 active:scale-90 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="flex gap-4 mb-4">
+                <button onclick="goToEditor('journal')" class="flex-1 bg-stone-50 border border-stone-100 p-6 rounded-3xl flex flex-col items-center gap-3 hover:bg-cyan-50 hover:border-cyan-100 transition-all active:scale-95 shadow-sm">
+                    <span class="text-4xl drop-shadow-sm">📓</span>
+                    <span class="text-sm font-bold text-stone-700 tracking-wider">手账碎片</span>
+                </button>
+                <button onclick="goToEditor('article')" class="flex-1 bg-stone-50 border border-stone-100 p-6 rounded-3xl flex flex-col items-center gap-3 hover:bg-emerald-50 hover:border-emerald-100 transition-all active:scale-95 shadow-sm">
+                    <span class="text-4xl drop-shadow-sm">📝</span>
+                    <span class="text-sm font-bold text-stone-700 tracking-wider">深度文章</span>
+                </button>
+            </div>
+        </div>
     </div>`;
 }
 
-function formatDateTimeLocal(d) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
+function formatDateTimeLocal(d) { const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 function updateMetaDate(val) { editorMeta.date = val; }
-
 function goToYear(y) { state.level = 'year'; state.year = y; render(); }
 function goToMonth(m) { state.level = 'month'; state.month = m; render(); }
 function goToDay(d) { state.level = 'day'; state.day = d; render(); }
+function openArticle(id) { historyStack.push({...state}); state.level = 'articleView'; state.currentArticleId = id; render(); }
 
-function goToEditor() { 
-    editorMeta = { date: formatDateTimeLocal(new Date()), location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false };
+function goToEditor(type = 'journal') { 
+    document.getElementById('createMenuModal')?.classList.add('hidden');
+    isEditorDirty = false; 
+    
+    // 🌟 原生探测当前设备型号 (或提供备用缺省值)
+    let devName = 'Echo 客户端';
+    if (/android/i.test(navigator.userAgent)) devName = 'Android 设备';
+    if (/ipad|iphone|ipod/i.test(navigator.userAgent)) devName = 'iOS 设备';
+    
+    editorMeta = { date: formatDateTimeLocal(new Date()), location: '', weather: '', wordCount: 0, isArticleMode: type === 'article', hasPromptedArticle: type === 'article', title: '', device: devName };
     historyStack.push({...state}); state.level = 'editor'; state.editingId = null; render(); 
 }
 
 function cancelEdit() { state = historyStack.pop() || { level: 'home', year: null, month: null, day: null }; render(); }
 function goBack(target) { if (target) state.level = target; render(); }
 
-// 🌟 黑科技：长文本回车自动切段
 function saveJournal() {
-    const canvas = document.getElementById('journal-canvas');
+    let htmlContent = '';
+
+    if (editorMeta.isArticleMode) {
+        const titleInput = document.getElementById('articleTitleInput');
+        editorMeta.title = titleInput ? titleInput.value.trim() : (editorMeta.title || '');
+        const canvas = document.getElementById('article-canvas');
+        htmlContent = canvas.innerHTML;
+        if (canvas.innerText.trim() === '' && !htmlContent.includes('<img')) return alert("总得写点什么再保存吧？");
+    } else {
+        const canvas = document.getElementById('journal-canvas');
+        canvas.querySelectorAll('textarea').forEach(ta => {
+            const p = document.createElement('p'); p.className = `text-stone-700 text-base leading-relaxed whitespace-pre-wrap outline-none`; p.innerText = ta.value; ta.parentNode.replaceChild(p, ta);
+        });
+        htmlContent = canvas.innerHTML;
+        if (canvas.innerText.trim() === '' && !htmlContent.includes('<img') && !htmlContent.includes('<video') && !htmlContent.includes('<audio')) return alert("总得写点什么再保存吧？");
+    }
+
     if (!editorMeta.date) return alert("请输入确切的时间！");
     calculateWordCount();
-
-    canvas.querySelectorAll('textarea').forEach(ta => {
-        const isArticle = editorMeta.isArticleMode;
-        const pStyle = isArticle ? 'text-sm indent-8 leading-loose mb-1' : 'text-base leading-relaxed';
-        
-        if (isArticle) {
-            const lines = ta.value.split('\n');
-            const fragment = document.createDocumentFragment();
-            lines.forEach(line => {
-                const p = document.createElement('p');
-                p.className = `text-stone-700 ${pStyle} whitespace-pre-wrap outline-none`;
-                p.innerText = line;
-                if(line.trim() === '') p.innerHTML = '<br>'; 
-                fragment.appendChild(p);
-            });
-            ta.parentNode.replaceChild(fragment, ta);
-        } else {
-            const p = document.createElement('p');
-            p.className = `text-stone-700 ${pStyle} whitespace-pre-wrap outline-none`;
-            p.innerText = ta.value;
-            ta.parentNode.replaceChild(p, ta);
-        }
-    });
-
-    const htmlContent = canvas.innerHTML;
-    if (canvas.innerText.trim() === '' && !htmlContent.includes('<img') && !htmlContent.includes('<video') && !htmlContent.includes('<audio')) {
-        return alert("总得写点什么再保存吧？");
-    }
 
     const selectedDate = new Date(editorMeta.date);
     const y = selectedDate.getFullYear(), m = selectedDate.getMonth() + 1, d = selectedDate.getDate();
@@ -656,429 +929,143 @@ function saveJournal() {
     const timeStr = `${pad(selectedDate.getHours())}:${pad(selectedDate.getMinutes())}`;
     const fullDateStr = `${y}-${pad(m)}-${pad(d)} ${timeStr}`;
 
-    if (!db[y]) db[y] = {};
-    if (!db[y][m]) db[y][m] = [];
-
+    if (!db[y]) db[y] = {}; if (!db[y][m]) db[y][m] = [];
     const newId = state.editingId || 'e_' + Date.now();
+    
     if (state.editingId) {
         const oldY = state.year, oldM = state.month;
-        if (db[oldY] && db[oldY][oldM]) {
-            db[oldY][oldM] = db[oldY][oldM].filter(x => x.id !== state.editingId);
-        }
+        if (db[oldY] && db[oldY][oldM]) db[oldY][oldM] = db[oldY][oldM].filter(x => x.id !== state.editingId);
     }
 
-    db[y][m].unshift({
-        id: newId, day: d, timeStr: timeStr, fullDateStr: fullDateStr, 
-        location: editorMeta.location, weather: editorMeta.weather, 
-        wordCount: editorMeta.wordCount, 
-        isArticleMode: editorMeta.isArticleMode, 
-        html: htmlContent
-    });
-
+    db[y][m].unshift({ id: newId, day: d, timeStr: timeStr, fullDateStr: fullDateStr, location: editorMeta.location, weather: editorMeta.weather, wordCount: editorMeta.wordCount, isArticleMode: editorMeta.isArticleMode, title: editorMeta.title, device: editorMeta.device, html: htmlContent });
     saveToLocal();
-    state.year = y; state.month = m; state.day = d; state.level = 'day';
+    state.year = y; state.month = m; state.day = d; 
+    
+    if (editorMeta.isArticleMode) { state.level = 'articleView'; state.currentArticleId = newId; } else { state.level = 'day'; }
     render();
 }
 
 function editEntry(id) {
     const entry = db[state.year][state.month].find(x => x.id === id);
     const pad = n => String(n).padStart(2, '0');
-    editorMeta = {
-        date: `${state.year}-${pad(state.month)}-${pad(entry.day)}T${entry.timeStr}`,
-        location: entry.location || '',
-        weather: entry.weather || '',
-        wordCount: entry.wordCount || 0,
-        isArticleMode: entry.isArticleMode || false, 
-        hasPromptedArticle: true 
-    };
+    isEditorDirty = false; 
+    editorMeta = { date: `${state.year}-${pad(state.month)}-${pad(entry.day)}T${entry.timeStr}`, location: entry.location || '', weather: entry.weather || '', wordCount: entry.wordCount || 0, isArticleMode: entry.isArticleMode || false, hasPromptedArticle: true, title: entry.title || '', device: entry.device || 'Echo 客户端' };
     historyStack.push({...state}); state.level = 'editor'; state.editingId = id; render();
 }
 
-function deleteEntry(id) {
-    if (confirm("确定要删除这条记录吗？无法恢复哦。")) {
-        db[state.year][state.month] = db[state.year][state.month].filter(x => x.id !== id);
-        saveToLocal();
-        render();
-    }
-}
+function deleteEntry(id) { if (confirm("确定要删除这条记录吗？无法恢复哦。")) { db[state.year][state.month] = db[state.year][state.month].filter(x => x.id !== id); saveToLocal(); render(); } }
 
-// 🌟 完整的块生成引擎，绝无删减！
 function createBlockHTML(type, url = '', duration = 0, timestamp = '') {
-    let inner = '';
-    const textStyle = editorMeta.isArticleMode ? 'text-sm indent-8 leading-loose' : 'text-base leading-relaxed';
-    
-    if (type === 'text') {
-        inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 ${textStyle} placeholder-stone-400" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount();"></textarea>`;
-    } else if (type === 'image') {
-        inner = `<img src="${url}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mt-2">`;
-    } else if (type === 'video') {
-        inner = `<div class="py-2"><video controls class="w-full rounded-lg shadow-sm border border-stone-200 mt-2" src="${url}"></video></div>`;
-    } else if (type === 'voice') {
-        const pad = n => String(Math.floor(n)).padStart(2, '0');
-        const timeStr = duration > 0 ? `0:${pad(duration)}` : '0:00';
-        inner = `
-        <div class="voice-container bg-cyan-50 border border-cyan-100 rounded-xl px-3 py-2 w-[280px] max-w-[90vw] shadow-sm flex items-center gap-2 no-print" 
-             data-duration="${duration}" 
-             data-recorded-at="${timestamp}">
-            
-            <button onclick="toggleVoice(this)" class="w-6 h-6 flex-shrink-0 bg-cyan-600 rounded-full flex items-center justify-center shadow-md active:scale-95 transition-transform">
-                <svg class="svg-play w-3 h-3 text-white ml-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path fill-rule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clip-rule="evenodd" />
-                </svg>
-                <svg class="svg-pause w-3 h-3 text-white hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                    <path fill-rule="evenodd" d="M6.75 5.25a.75.75 0 01.75-.75H9a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V5.25zm7.5 0a.75.75 0 01.75-.75h1.5a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75h-1.5a.75.75 0 01-.75-.75V5.25z" clip-rule="evenodd" />
-                </svg>
-            </button>
-            
+    let inner = ''; 
+    if (type === 'text') inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-300" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount(); isEditorDirty = true;"></textarea>`;
+    else if (type === 'image') inner = `<img src="${url}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mt-2">`;
+    else if (type === 'video') inner = `<div class="py-2"><video controls class="w-full rounded-lg shadow-sm border border-stone-200 mt-2" src="${url}"></video></div>`;
+    else if (type === 'voice') {
+        const pad = n => String(Math.floor(n)).padStart(2, '0'); const timeStr = duration > 0 ? `0:${pad(duration)}` : '0:00';
+        inner = `<div class="voice-container bg-cyan-50 border border-cyan-100 rounded-xl px-3 py-2 w-[280px] max-w-[90vw] shadow-sm flex items-center gap-2 no-print" data-duration="${duration}" data-recorded-at="${timestamp}">
+            <button onclick="toggleVoice(this)" class="w-6 h-6 flex-shrink-0 bg-cyan-600 rounded-full flex items-center justify-center shadow-md active:scale-95 transition-transform"><svg class="svg-play w-3 h-3 text-white ml-0.5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z" clip-rule="evenodd" /></svg><svg class="svg-pause w-3 h-3 text-white hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M6.75 5.25a.75.75 0 01.75-.75H9a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75H7.5a.75.75 0 01-.75-.75V5.25zm7.5 0a.75.75 0 01.75-.75h1.5a.75.75 0 01.75.75v13.5a.75.75 0 01-.75.75h-1.5a.75.75 0 01-.75-.75V5.25z" clip-rule="evenodd" /></svg></button>
             <span class="time-display text-sm text-cyan-700 font-mono font-bold min-w-[36px] text-center">${timeStr}</span>
-            
-           <div class="flex-1 h-[3px] bg-cyan-200 rounded-full relative overflow-hidden">
-                <div class="progress-bar absolute left-0 top-0 h-full bg-cyan-600 w-0 pointer-events-none"></div>
-            </div>
-
+            <div class="flex-1 h-[3px] bg-cyan-200 rounded-full relative overflow-hidden"><div class="progress-bar absolute left-0 top-0 h-full bg-cyan-600 w-0 pointer-events-none"></div></div>
             <div class="flex items-center gap-0.5 ml-1">
-                <button onclick="toggleMute(this)" class="flex-shrink-0 active:scale-90 transition-transform">
-                    <svg class="svg-on w-4 h-4 text-cyan-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" />
-                        <path d="M15.932 7.757a.75.75 0 011.061 0 4.5 4.5 0 010 6.364.75.75 0 01-1.06-1.06 3 3 0 000-4.243.75.75 0 010-1.061z" />
-                    </svg>
-                    <svg class="svg-off w-4 h-4 text-cyan-400 hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 101.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 10-1.06-1.06l-1.72 1.72-1.72-1.72z" />
-                    </svg>
-                </button>
-                
-                <div class="relative flex items-center">
-                    <button onclick="toggleMenu(this)" class="flex-shrink-0 active:scale-90 transition-transform">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="-5 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 text-cyan-600">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" />
-                        </svg>
-                    </button>
-
-                    <div class="voice-menu hidden absolute right-0 bottom-8 bg-white border border-stone-100 shadow-xl rounded-lg w-28 text-sm overflow-hidden z-50">
-                        <button onclick="downloadAudio(this)" class="w-full text-left px-4 py-2 hover:bg-stone-50 text-stone-600 flex items-center gap-2 font-bold">
-                            <span class="text-lg"></span> 下载音频
-                        </button>
-                    </div>
-                </div>
+                <button onclick="toggleMute(this)" class="flex-shrink-0 active:scale-90 transition-transform"><svg class="svg-on w-4 h-4 text-cyan-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM18.584 5.106a.75.75 0 011.06 0c3.808 3.807 3.808 9.98 0 13.788a.75.75 0 11-1.06-1.06 8.25 8.25 0 000-11.668.75.75 0 010-1.06z" /><path d="M15.932 7.757a.75.75 0 011.061 0 4.5 4.5 0 010 6.364.75.75 0 01-1.06-1.06 3 3 0 000-4.243.75.75 0 010-1.061z" /></svg><svg class="svg-off w-4 h-4 text-cyan-400 hidden" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M13.5 4.06c0-1.336-1.616-2.005-2.56-1.06l-4.5 4.5H4.508c-1.141 0-2.318.664-2.66 1.905A9.76 9.76 0 001.5 12c0 .898.121 1.768.35 2.595.341 1.24 1.518 1.905 2.659 1.905h1.93l4.5 4.5c.945.945 2.561.276 2.561-1.06V4.06zM17.78 9.22a.75.75 0 10-1.06 1.06L18.44 12l-1.72 1.72a.75.75 0 101.06 1.06l1.72-1.72 1.72 1.72a.75.75 0 101.06-1.06L20.56 12l1.72-1.72a.75.75 0 10-1.06-1.06l-1.72 1.72-1.72-1.72z" /></svg></button>
+                <div class="relative flex items-center"><button onclick="toggleMenu(this)" class="flex-shrink-0 active:scale-90 transition-transform"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="-5 0 24 24" stroke-width="2" stroke="currentColor" class="w-6 h-6 text-cyan-600"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z" /></svg></button><div class="voice-menu hidden absolute right-0 bottom-8 bg-white border border-stone-100 shadow-xl rounded-lg w-28 text-sm overflow-hidden z-50"><button onclick="downloadAudio(this)" class="w-full text-left px-4 py-2 hover:bg-stone-50 text-stone-600 flex items-center gap-2 font-bold">下载音频</button></div></div>
             </div>
-            
             <audio class="hidden voice-player" src="${url}" ontimeupdate="updateVoiceProgress(this)" onended="resetVoiceProgress(this)"></audio>
         </div>`;
     }
-
-    return `
-    <div class="block-item relative group bg-white/40 backdrop-blur-sm p-2 rounded-xl border border-transparent hover:border-stone-200 transition-colors">
-        <div class="absolute -left-2 top-1/2 -translate-y-1/2 flex-col gap-1 hidden group-hover:flex z-10 no-print">
-            <button onclick="moveBlock(this, 'up')" class="bg-white border border-stone-200 text-stone-500 rounded-t text-[10px] w-5 h-5 shadow-sm hover:bg-stone-50">▲</button>
-            <button onclick="moveBlock(this, 'down')" class="bg-white border border-stone-200 text-stone-500 rounded-b text-[10px] w-5 h-5 shadow-sm hover:bg-stone-50">▼</button>
-        </div>
-        <button onclick="this.parentElement.remove(); setTimeout(calculateWordCount, 50);" class="absolute -right-2 -top-2 bg-stone-300 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] shadow-sm hidden group-hover:flex hover:bg-rose-500 transition-colors z-10 no-print">✕</button>
-        ${inner}
-    </div>`;
+    return `<div class="block-item relative group bg-white/40 backdrop-blur-sm p-2 rounded-xl border border-transparent hover:border-stone-200 transition-colors"><div class="absolute -left-2 top-1/2 -translate-y-1/2 flex-col gap-1 hidden group-hover:flex z-10 no-print"><button onclick="moveBlock(this, 'up')" class="bg-white border border-stone-200 text-stone-500 rounded-t text-[10px] w-5 h-5 shadow-sm hover:bg-stone-50">▲</button><button onclick="moveBlock(this, 'down')" class="bg-white border border-stone-200 text-stone-500 rounded-b text-[10px] w-5 h-5 shadow-sm hover:bg-stone-50">▼</button></div><button onclick="this.parentElement.remove(); isEditorDirty = true; setTimeout(calculateWordCount, 50);" class="absolute -right-2 -top-2 bg-stone-300 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] shadow-sm hidden group-hover:flex hover:bg-rose-500 transition-colors z-10 no-print">✕</button>${inner}</div>`;
 }
 
 function addBlock(type, event) {
     const canvas = document.getElementById('journal-canvas');
     if (!canvas) return;
-    
     if ((type === 'image' || type === 'video') && event.target.files[0]) {
         const reader = new FileReader();
-        reader.onload = async function(e) {
-            const localUrl = await saveMediaToDisk(e.target.result, type);
-            canvas.insertAdjacentHTML('beforeend', createBlockHTML(type, localUrl));
-            canvas.scrollTop = canvas.scrollHeight;
+        reader.onload = async function(e) { 
+            const localUrl = await saveMediaToDisk(e.target.result, type); 
+            canvas.insertAdjacentHTML('beforeend', createBlockHTML(type, localUrl)); 
+            isEditorDirty = true; 
+            canvas.scrollTop = canvas.scrollHeight; 
         };
-        reader.readAsDataURL(event.target.files[0]);
-        event.target.value = '';
-    } else {
-        canvas.insertAdjacentHTML('beforeend', createBlockHTML(type));
-        canvas.scrollTop = canvas.scrollHeight;
+        reader.readAsDataURL(event.target.files[0]); event.target.value = '';
+    } else { 
+        canvas.insertAdjacentHTML('beforeend', createBlockHTML(type)); 
+        isEditorDirty = true; 
+        canvas.scrollTop = canvas.scrollHeight; 
     }
 }
-
-function moveBlock(button, direction) {
-    const block = button.parentElement.parentElement;
-    if (direction === 'up' && block.previousElementSibling) {
-        block.previousElementSibling.before(block);
-    } else if (direction === 'down' && block.nextElementSibling) {
-        block.nextElementSibling.after(block);
-    }
-}
-
-function toggleVoice(btn) {
-    const container = btn.closest('.voice-container');
-    const audio = container.querySelector('.voice-player');
-    const svgPlay = btn.querySelector('.svg-play');
-    const svgPause = btn.querySelector('.svg-pause');
-
-    if (audio.paused) {
-        document.querySelectorAll('.voice-player').forEach(a => {
-            if(!a.paused && a !== audio) {
-                a.pause();
-                resetVoiceProgress(a); 
-            }
-        });
-        audio.play();
-        svgPlay.classList.add('hidden');
-        svgPause.classList.remove('hidden');
-    } else {
-        audio.pause();
-        svgPlay.classList.remove('hidden');
-        svgPause.classList.add('hidden');
-    }
-}
-
-function updateVoiceProgress(audio) {
-    const container = audio.closest('.voice-container');
-    const timeDisplay = container.querySelector('.time-display');
-    const progressBar = container.querySelector('.progress-bar');
-    
-    const currentSeconds = Math.floor(audio.currentTime);
-    const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1);
-    const percent = (audio.currentTime / totalSeconds) * 100;
-    
-    progressBar.style.width = `${percent}%`;
-    const pad = n => String(n).padStart(2, '0');
-    timeDisplay.innerText = `0:${pad(currentSeconds)}`;
-}
-
-function resetVoiceProgress(audio) {
-    const container = audio.closest('.voice-container');
-    const svgPlay = container.querySelector('.svg-play');
-    const svgPause = container.querySelector('.svg-pause');
-    const timeDisplay = container.querySelector('.time-display');
-    const progressBar = container.querySelector('.progress-bar');
-    const duration = container.getAttribute('data-duration');
-    
-    audio.currentTime = 0; 
-    progressBar.style.width = '0%'; 
-    
-    if(svgPlay && svgPause) {
-        svgPlay.classList.remove('hidden');
-        svgPause.classList.add('hidden');
-    }
-    
-    const pad = n => String(n).padStart(2, '0');
-    timeDisplay.innerText = duration > 0 ? `0:${pad(duration)}` : '0:00';
-}
-
-function toggleMute(btn) {
-    const container = btn.closest('.voice-container');
-    const audio = container.querySelector('.voice-player');
-    const svgOn = btn.querySelector('.svg-on');
-    const svgOff = btn.querySelector('.svg-off');
-
-    audio.muted = !audio.muted;
-    
-    if (audio.muted) {
-        svgOn.classList.add('hidden');
-        svgOff.classList.remove('hidden');
-    } else {
-        svgOn.classList.remove('hidden');
-        svgOff.classList.add('hidden');
-    }
-}
-
-function toggleMenu(btn) {
-    const menu = btn.nextElementSibling;
-    document.querySelectorAll('.voice-menu').forEach(m => {
-        if (m !== menu) m.classList.add('hidden');
-    });
-    menu.classList.toggle('hidden');
-}
-
-function closeMapPicker() {
-    document.getElementById('mapPickerModal').classList.add('hidden');
-}
-
+function moveBlock(button, direction) { const block = button.parentElement.parentElement; if (direction === 'up' && block.previousElementSibling) block.previousElementSibling.before(block); else if (direction === 'down' && block.nextElementSibling) block.nextElementSibling.after(block); }
+function toggleVoice(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgPlay = btn.querySelector('.svg-play'); const svgPause = btn.querySelector('.svg-pause'); if (audio.paused) { document.querySelectorAll('.voice-player').forEach(a => { if(!a.paused && a !== audio) { a.pause(); resetVoiceProgress(a); } }); audio.play(); svgPlay.classList.add('hidden'); svgPause.classList.remove('hidden'); } else { audio.pause(); svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } }
+function updateVoiceProgress(audio) { const container = audio.closest('.voice-container'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const currentSeconds = Math.floor(audio.currentTime); const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1); progressBar.style.width = `${(audio.currentTime / totalSeconds) * 100}%`; timeDisplay.innerText = `0:${String(currentSeconds).padStart(2, '0')}`; }
+function resetVoiceProgress(audio) { const container = closest('.voice-container'); const svgPlay = container.querySelector('.svg-play'); const svgPause = container.querySelector('.svg-pause'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const duration = container.getAttribute('data-duration'); audio.currentTime = 0; progressBar.style.width = '0%'; if(svgPlay && svgPause) { svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } timeDisplay.innerText = duration > 0 ? `0:${String(Math.floor(duration)).padStart(2, '0')}` : '0:00'; }
+function toggleMute(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgOn = btn.querySelector('.svg-on'); const svgOff = btn.querySelector('.svg-off'); audio.muted = !audio.muted; if (audio.muted) { svgOn.classList.add('hidden'); svgOff.classList.remove('hidden'); } else { svgOn.classList.remove('hidden'); svgOff.classList.add('hidden'); } }
+function toggleMenu(btn) { const menu = btn.nextElementSibling; document.querySelectorAll('.voice-menu').forEach(m => { if (m !== menu) m.classList.add('hidden'); }); menu.classList.toggle('hidden'); }
+function closeMapPicker() { document.getElementById('mapPickerModal').classList.add('hidden'); }
 function openMapPicker() {
-    closeLocationModal(); 
-    const modal = document.getElementById('mapPickerModal');
-    modal.classList.remove('hidden');
-    
+    closeLocationModal(); document.getElementById('mapPickerModal').classList.remove('hidden');
     if (!amap) {
         setTimeout(() => {
             amap = new AMap.Map('mapContainer', { zoom: 16 });
-            
             AMap.plugin('AMap.Geolocation', function() {
-                var geolocation = new AMap.Geolocation({
-                    enableHighAccuracy: true, 
-                    timeout: 10000,           
-                    buttonPosition: 'RB',     
-                    zoomToAccuracy: true      
-                });
+                var geolocation = new AMap.Geolocation({ enableHighAccuracy: true, timeout: 10000, buttonPosition: 'RB', zoomToAccuracy: true });
                 amap.addControl(geolocation);
-                
-                document.getElementById('selectedAddrInfo').innerText = "正在获取您的当前位置...";
-                
+                document.getElementById('selectedAddrInfo').innerText = "获取当前位置...";
                 geolocation.getCurrentPosition(function(status, result) {
                     if (status === 'complete') {
                         const lnglat = result.position;
-                        if (!amapMarker) {
-                            amapMarker = new AMap.Marker({ position: lnglat });
-                            amap.add(amapMarker);
-                        } else {
-                            amapMarker.setPosition(lnglat);
-                        }
-                        AMap.plugin('AMap.Geocoder', function() {
-                            new AMap.Geocoder().getAddress(lnglat, function(status, result) {
-                                if (status === 'complete' && result.regeocode) {
-                                    tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent);
-                                    document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`;
-                                }
-                            });
-                        });
-                    } else {
-                        document.getElementById('selectedAddrInfo').innerText = "自动定位失败，请手动滑动地图选择";
-                    }
+                        if (!amapMarker) { amapMarker = new AMap.Marker({ position: lnglat }); amap.add(amapMarker); } else amapMarker.setPosition(lnglat);
+                        AMap.plugin('AMap.Geocoder', function() { new AMap.Geocoder().getAddress(lnglat, function(status, result) { if (status === 'complete' && result.regeocode) { tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent); document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`; } }); });
+                    } else document.getElementById('selectedAddrInfo').innerText = "自动定位失败，请手动选择";
                 });
             });
-
             amap.on('click', function(e) {
                 const lnglat = e.lnglat;
-                if (!amapMarker) {
-                    amapMarker = new AMap.Marker({ position: lnglat });
-                    amap.add(amapMarker);
-                } else {
-                    amapMarker.setPosition(lnglat);
-                }
-
-                document.getElementById('selectedAddrInfo').innerText = "正在解析地址...";
-                AMap.plugin('AMap.Geocoder', function() {
-                    new AMap.Geocoder().getAddress(lnglat, function(status, result) {
-                        if (status === 'complete' && result.regeocode) {
-                            tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent);
-                            document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`;
-                        } else {
-                            document.getElementById('selectedAddrInfo').innerText = "地址解析失败";
-                        }
-                    });
-                });
+                if (!amapMarker) { amapMarker = new AMap.Marker({ position: lnglat }); amap.add(amapMarker); } else amapMarker.setPosition(lnglat);
+                document.getElementById('selectedAddrInfo').innerText = "解析中...";
+                AMap.plugin('AMap.Geocoder', function() { new AMap.Geocoder().getAddress(lnglat, function(status, result) { if (status === 'complete' && result.regeocode) { tempSelectedLoc = simplifyAddress(result.regeocode.addressComponent); document.getElementById('selectedAddrInfo').innerText = `已选：${tempSelectedLoc}`; } else document.getElementById('selectedAddrInfo').innerText = "解析失败"; }); });
             });
         }, 100);
     }
 }
-
-document.getElementById('confirmMapLoc').onclick = function() {
-    if (tempSelectedLoc) {
-        editorMeta.location = tempSelectedLoc;
-        closeMapPicker();
-        render(); 
-    } else {
-        alert("请先在地图上点一个位置哦");
-    }
-};
+document.getElementById('confirmMapLoc').onclick = function() { if (tempSelectedLoc) { editorMeta.location = tempSelectedLoc; isEditorDirty = true; closeMapPicker(); updateLocationDOM(); } else alert("请先在地图上点一个位置"); };
 
 async function downloadAudio(btn) {
-    const container = btn.closest('.voice-container');
-    const audio = container.querySelector('.voice-player');
-    const menu = btn.closest('.voice-menu');
-
-    menu.classList.add('hidden');
-
-    const recordedTime = container.getAttribute('data-recorded-at') || '未知时间';
-    const fileName = `回响APP_语音_${Date.now()}.webm`;
-
+    const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const menu = btn.closest('.voice-menu'); menu.classList.add('hidden');
+    const recordedTime = container.getAttribute('data-recorded-at') || '未知时间'; const fileName = `回响APP_语音_${Date.now()}.webm`;
     try {
         if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-            const Filesystem = Capacitor.Plugins.Filesystem;
-            const Share = Capacitor.Plugins.Share;
-
+            const Filesystem = Capacitor.Plugins.Filesystem; const Share = Capacitor.Plugins.Share;
             const base64Data = audio.src.split(',')[1];
-            await Filesystem.writeFile({
-                path: fileName,
-                data: base64Data,
-                directory: 'CACHE'
-            });
-
-            const uriResult = await Filesystem.getUri({
-                path: fileName,
-                directory: 'CACHE'
-            });
-
-            await Share.share({
-                title: '回响语音分享',
-                text: `这是我在【回响】录制的一段珍贵语音，时间是${recordedTime}。`,
-                url: uriResult.uri,
-                dialogTitle: '保存或分享语音'
-            });
-
-        } else {
-            const a = document.createElement('a');
-            a.href = audio.src;
-            a.download = fileName;
-            a.click();
-        }
-    } catch (error) {
-        console.error(error);
-        alert("❌ 操作失败: " + error.message);
-    }
+            await Filesystem.writeFile({ path: fileName, data: base64Data, directory: 'CACHE' });
+            const uriResult = await Filesystem.getUri({ path: fileName, directory: 'CACHE' });
+            await Share.share({ title: '回响语音分享', text: `语音记录，时间是${recordedTime}。`, url: uriResult.uri, dialogTitle: '保存或分享' });
+        } else { const a = document.createElement('a'); a.href = audio.src; a.download = fileName; a.click(); }
+    } catch (error) { alert("❌ 操作失败: " + error.message); }
 }
 
 async function initFileSystem() {
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-        const Filesystem = Capacitor.Plugins.Filesystem;
-        const dirs = ['EchoAppData', 'EchoAppData/Images', 'EchoAppData/Videos', 'EchoAppData/Audios'];
-
-        await Promise.all(dirs.map(async (dir) => {
-            try {
-                await Filesystem.stat({ path: dir, directory: 'DATA' });
-            } catch (e) {
-                try { await Filesystem.mkdir({ path: dir, directory: 'DATA', recursive: true }); } 
-                catch (err) {}
-            }
-        }));
-
-        try {
-            const result = await Filesystem.readFile({ path: 'EchoAppData/database.json', directory: 'DATA', encoding: 'utf8' });
-            db = JSON.parse(result.data);
-        } catch (e) {
-            let oldData = localStorage.getItem('WangShiShuJia_DB');
-            db = oldData ? JSON.parse(oldData) : {};
-            await saveToLocal(); 
-            alert("欢迎来到，时间的回响");
-        }
-
-    } else {
-        let oldData = localStorage.getItem('WangShiShuJia_DB');
-        db = oldData ? JSON.parse(oldData) : {};
-    }
-    
+        const Filesystem = Capacitor.Plugins.Filesystem; const dirs = ['EchoAppData', 'EchoAppData/Images', 'EchoAppData/Videos', 'EchoAppData/Audios'];
+        await Promise.all(dirs.map(async (dir) => { try { await Filesystem.stat({ path: dir, directory: 'DATA' }); } catch (e) { try { await Filesystem.mkdir({ path: dir, directory: 'DATA', recursive: true }); } catch (err) {} } }));
+        try { const result = await Filesystem.readFile({ path: 'EchoAppData/database.json', directory: 'DATA', encoding: 'utf8' }); db = JSON.parse(result.data); } 
+        catch (e) { let oldData = localStorage.getItem('WangShiShuJia_DB'); db = oldData ? JSON.parse(oldData) : {}; await saveToLocal(); alert("欢迎来到，时间的回响"); }
+    } else { let oldData = localStorage.getItem('WangShiShuJia_DB'); db = oldData ? JSON.parse(oldData) : {}; }
     render();
 }
-
 initFileSystem();
 
 async function initHardwareBackButton() {
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
         const App = Capacitor.Plugins.App;
-        
         App.addListener('backButton', () => {
-            if (state.level === 'home') {
-                App.exitApp(); 
-            } else if (state.level === 'editor') {
-                cancelEdit(); 
-            } else if (['year', 'gallery', 'roam', 'map', 'settings'].includes(state.level)) {
-                goBack('home'); 
-            } else if (state.level === 'month') {
-                goBack('year');
-            } else if (state.level === 'day') {
-                goBack('month');
-            } else if (state.level === 'locationDetails') {
-                state.level = 'map'; 
-                renderMapView();
-            }
+            if (state.level === 'home') App.exitApp(); 
+            else if (state.level === 'editor') attemptCancelEdit(); 
+            else if (['year', 'gallery', 'roam', 'map', 'settings', 'calendar'].includes(state.level)) goBack('home'); 
+            else if (state.level === 'month') goBack('year');
+            else if (state.level === 'day') goBack('month');
+            else if (state.level === 'articleView') goBack('day');
+            else if (state.level === 'locationDetails') { state.level = 'map'; renderMapView(); }
         });
     }
 }
-
 initHardwareBackButton();
-
-document.addEventListener('click', function(event) {
-    const isClickOnMenuBtn = event.target.closest('button[onclick="toggleMenu(this)"]');
-    if (!isClickOnMenuBtn) {
-        document.querySelectorAll('.voice-menu').forEach(menu => {
-            menu.classList.add('hidden');
-        });
-    }
-});
