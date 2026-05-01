@@ -1,4 +1,4 @@
-// 🌟 回响 APP V3.0.0 数据中枢 (文章尾部元数据引擎 & 局部防丢渲染)
+// 🌟 回响 APP V3.8.0 数据中枢 (修复画布溢出重合 Bug & 纯净粘贴拦截器)
 let db = {};
 let state = { level: 'home', year: null, month: null, day: null, editingId: null, currentArticleId: null };
 let editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false, title: '', device: '' };
@@ -167,7 +167,6 @@ async function getLocationFromDevice() {
     } catch (error) { if (isResolved) return; clearTimeout(timeoutSafeLock); isResolved = true; alert("⚠️ 定位失败: " + error.message); title.innerText = oldTitle; }
 }
 
-// 🌟 新增：局部更新 DOM，绝不抹除用户画布文本！
 function updateLocationDOM() {
     const ld = document.getElementById('locDisplay');
     if (ld) ld.innerText = editorMeta.location || '定位';
@@ -196,7 +195,6 @@ function clearLocation() { editorMeta.location = ''; isEditorDirty = true; close
 function openWeatherModal() { document.getElementById('weatherModal').classList.remove('hidden'); }
 function closeWeatherModal() { document.getElementById('weatherModal').classList.add('hidden'); }
 
-// 🌟 新增：局部更新天气
 function selectWeather(w) { 
     editorMeta.weather = w; isEditorDirty = true; closeWeatherModal(); 
     const wd = document.getElementById('weatherDisplay');
@@ -207,7 +205,6 @@ function selectWeather(w) {
 
 function goToSettings() { closeSidebar(); historyStack.push({...state}); state.level = 'settings'; render(); }
 
-// 🌟 核心渲染引擎 (已恢复核心开发者署名)
 function render() {
     const app = document.getElementById('app');
     
@@ -469,36 +466,42 @@ function render() {
 
         let contentHtml = '';
         if (isArticle) {
+            // 🌟 核心修复点 1: 重构了外部容器结构，采用 min-h-full flex-col，确保不论多长的文本都能将底部元数据往下推，不再重叠。
+            // 🌟 核心修复点 2: 给 canvas 加了 handleArticlePaste，拦截粘贴的富文本样式。
             contentHtml = `
-                <div class="flex-1 p-6 pb-20 overflow-y-auto relative flex flex-col">
-                    <input type="text" id="articleTitleInput" placeholder="《请输入文章标题》" value="${editorMeta.title || ''}" class="w-full text-xl font-bold text-stone-800 bg-transparent border-none outline-none mb-6 placeholder-stone-300 tracking-wider mt-2 flex-shrink-0" oninput="editorMeta.title = this.value; isEditorDirty = true;">
-                    
-                    <div id="article-canvas" contenteditable="true" class="w-full min-h-[40vh] outline-none text-stone-700 text-base leading-loose mb-10" 
-                         placeholder="从这里开始撰写..." 
-                         onkeyup="calculateWordCount(); saveCursorPosition();" 
-                         onmouseup="saveCursorPosition()" 
-                         oninput="calculateWordCount(); isEditorDirty = true;"></div>
-                         
-                    <div class="mt-auto pt-8 pb-4 flex flex-col gap-4 text-stone-400 text-[13px] font-medium tracking-wider select-none no-print">
+                <div class="flex-1 overflow-y-auto bg-[#faf9f6] relative">
+                    <div class="flex flex-col min-h-full p-6 pb-24">
+                        <input type="text" id="articleTitleInput" placeholder="《请输入文章标题》" value="${editorMeta.title || ''}" class="flex-shrink-0 w-full text-xl font-bold text-stone-800 bg-transparent border-none outline-none mb-6 placeholder-stone-300 tracking-wider mt-2" oninput="editorMeta.title = this.value; isEditorDirty = true;">
                         
-                        <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openWeatherModal()">
-                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-2.25l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
-                            <span id="articleWeatherDisplay">${editorMeta.weather || '(无天气信息)'}</span>
-                        </div>
-                        
-                        <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openLocationModal()">
-                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
-                            <span id="articleLocDisplay">${editorMeta.location || '(无位置信息)'}</span>
-                        </div>
-                        
-                        <div class="flex items-center gap-3">
-                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>
-                            <span>${editorMeta.device || 'Echo 客户端'}</span>
-                        </div>
-                        
-                        <div class="flex items-center gap-3">
-                            <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
-                            <span id="articleWordCountDisplay">${editorMeta.wordCount} 字</span>
+                        <div id="article-canvas" contenteditable="true" class="w-full flex-1 outline-none text-stone-700 text-base leading-loose mb-10" 
+                             style="word-break: break-word; min-height: 40vh;"
+                             placeholder="从这里开始撰写..." 
+                             onpaste="handleArticlePaste(event)"
+                             onkeyup="calculateWordCount(); saveCursorPosition();" 
+                             onmouseup="saveCursorPosition()" 
+                             oninput="calculateWordCount(); isEditorDirty = true;"></div>
+                             
+                        <div class="mt-auto pt-8 pb-4 flex flex-col gap-4 text-stone-400 text-[13px] font-medium tracking-wider select-none no-print border-t border-stone-100 flex-shrink-0">
+                            
+                            <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openWeatherModal()">
+                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-2.25l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
+                                <span id="articleWeatherDisplay">${editorMeta.weather || '(无天气信息)'}</span>
+                            </div>
+                            
+                            <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openLocationModal()">
+                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
+                                <span id="articleLocDisplay">${editorMeta.location || '(无位置信息)'}</span>
+                            </div>
+                            
+                            <div class="flex items-center gap-3">
+                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>
+                                <span>${editorMeta.device || 'Echo 客户端'}</span>
+                            </div>
+                            
+                            <div class="flex items-center gap-3">
+                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+                                <span id="articleWordCountDisplay">${editorMeta.wordCount} 字</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -528,7 +531,7 @@ function render() {
                         <span id="weatherDisplay" class="truncate">${editorMeta.weather || '🌤️ 天气'}</span>
                     </div>
                     <div class="w-px h-4 bg-stone-200 flex-shrink-0"></div>
-                    <div class="flex items-center justify-center w-1/4 px-1 font-bold text-stone-400 cursor-pointer hover:text-cyan-600 transition-colors" onclick="toggleArticleMode()">
+                    <div class="flex items-center justify-center w-1/4 px-1 font-bold text-stone-400">
                         <span id="wordCountDisplay">字数：${editorMeta.wordCount}</span>
                     </div>
                 </div>
@@ -579,7 +582,7 @@ function render() {
         `;
 
         app.innerHTML = `
-            <div class="flex flex-col h-full ${isArticle ? 'bg-[#faf9f6]' : 'journal-bg'} relative">
+            <div class="flex flex-col h-full bg-transparent relative">
                 
                 <div id="articlePrompt" class="hidden absolute top-16 left-1/2 -translate-x-1/2 bg-cyan-600/95 backdrop-blur text-white px-5 py-2.5 rounded-full shadow-lg z-50 text-xs font-bold flex items-center gap-3 animate-bounce">
                     <span>字数超66啦，要切成排版更好的文章模式吗？</span>
@@ -635,11 +638,10 @@ function render() {
                 <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.0.0</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.0.1</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
-                    <!-- 原汁原味的作者信息回归 -->
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">更新日期</span>
                         <span class="text-stone-400 text-sm font-mono">2026年4月26日</span>
@@ -651,7 +653,6 @@ function render() {
 
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
-                    <!-- 新增的字体排版入口排在下面 -->
                     <div onclick="alert('字体编辑模块准备就绪，等待你的具体细节需求！')" class="w-full flex justify-between items-center py-4 cursor-pointer hover:bg-stone-50 rounded-xl px-2 -mx-2 transition-colors">
                         <div class="flex items-center gap-3">
                             <div class="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg shadow-inner font-serif">A</div>
@@ -671,6 +672,15 @@ function render() {
         `;
     }
 }
+
+// 🌟 纯净粘贴拦截器：过滤所有的外部富文本样式，只保留纯文本，彻底解决外部CSS破坏排版的问题
+window.handleArticlePaste = function(e) {
+    e.preventDefault();
+    const text = (e.originalEvent || e).clipboardData.getData('text/plain');
+    document.execCommand('insertText', false, text);
+    isEditorDirty = true;
+    setTimeout(calculateWordCount, 50);
+};
 
 window.attemptCancelEdit = function() {
     if (isEditorDirty) {
@@ -758,7 +768,6 @@ document.addEventListener('click', function(event) {
     }
 });
 
-
 window.saveCursorPosition = function() {
     const sel = window.getSelection();
     if (sel.getRangeAt && sel.rangeCount) savedRange = sel.getRangeAt(0);
@@ -813,10 +822,9 @@ function calculateWordCount() {
     
     const display = document.getElementById('wordCountDisplay');
     if (display) {
-        display.innerHTML = `字数：${totalWords} <span class="ml-1 text-[9px] ${editorMeta.isArticleMode ? 'bg-cyan-100 text-cyan-600' : 'bg-stone-100 text-stone-500'} px-1.5 py-0.5 rounded border border-stone-200/50">${editorMeta.isArticleMode ? '文章' : '短篇'}</span>`;
+        display.innerHTML = `字数：${totalWords}`;
     }
 
-    // 同步更新画布底部的字数统计 (如果存在)
     const articleWordDisplay = document.getElementById('articleWordCountDisplay');
     if (articleWordDisplay) {
         articleWordDisplay.innerText = `${totalWords} 字`;
@@ -890,7 +898,6 @@ function goToEditor(type = 'journal') {
     document.getElementById('createMenuModal')?.classList.add('hidden');
     isEditorDirty = false; 
     
-    // 🌟 原生探测当前设备型号 (或提供备用缺省值)
     let devName = 'Echo 客户端';
     if (/android/i.test(navigator.userAgent)) devName = 'Android 设备';
     if (/ipad|iphone|ipod/i.test(navigator.userAgent)) devName = 'iOS 设备';
@@ -997,7 +1004,7 @@ function addBlock(type, event) {
 function moveBlock(button, direction) { const block = button.parentElement.parentElement; if (direction === 'up' && block.previousElementSibling) block.previousElementSibling.before(block); else if (direction === 'down' && block.nextElementSibling) block.nextElementSibling.after(block); }
 function toggleVoice(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgPlay = btn.querySelector('.svg-play'); const svgPause = btn.querySelector('.svg-pause'); if (audio.paused) { document.querySelectorAll('.voice-player').forEach(a => { if(!a.paused && a !== audio) { a.pause(); resetVoiceProgress(a); } }); audio.play(); svgPlay.classList.add('hidden'); svgPause.classList.remove('hidden'); } else { audio.pause(); svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } }
 function updateVoiceProgress(audio) { const container = audio.closest('.voice-container'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const currentSeconds = Math.floor(audio.currentTime); const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1); progressBar.style.width = `${(audio.currentTime / totalSeconds) * 100}%`; timeDisplay.innerText = `0:${String(currentSeconds).padStart(2, '0')}`; }
-function resetVoiceProgress(audio) { const container = closest('.voice-container'); const svgPlay = container.querySelector('.svg-play'); const svgPause = container.querySelector('.svg-pause'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const duration = container.getAttribute('data-duration'); audio.currentTime = 0; progressBar.style.width = '0%'; if(svgPlay && svgPause) { svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } timeDisplay.innerText = duration > 0 ? `0:${String(Math.floor(duration)).padStart(2, '0')}` : '0:00'; }
+function resetVoiceProgress(audio) { const container = audio.closest('.voice-container'); const svgPlay = container.querySelector('.svg-play'); const svgPause = container.querySelector('.svg-pause'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const duration = container.getAttribute('data-duration'); audio.currentTime = 0; progressBar.style.width = '0%'; if(svgPlay && svgPause) { svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } timeDisplay.innerText = duration > 0 ? `0:${String(Math.floor(duration)).padStart(2, '0')}` : '0:00'; }
 function toggleMute(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgOn = btn.querySelector('.svg-on'); const svgOff = btn.querySelector('.svg-off'); audio.muted = !audio.muted; if (audio.muted) { svgOn.classList.add('hidden'); svgOff.classList.remove('hidden'); } else { svgOn.classList.remove('hidden'); svgOff.classList.add('hidden'); } }
 function toggleMenu(btn) { const menu = btn.nextElementSibling; document.querySelectorAll('.voice-menu').forEach(m => { if (m !== menu) m.classList.add('hidden'); }); menu.classList.toggle('hidden'); }
 function closeMapPicker() { document.getElementById('mapPickerModal').classList.add('hidden'); }
