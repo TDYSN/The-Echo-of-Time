@@ -1,4 +1,4 @@
-// roam.js - 专门负责“时光漫游”模块的逻辑 (V5.0 轨道对齐修正版)
+// roam.js - 专门负责“时光漫游”模块的逻辑 (V5.1 完整修复版，包含长按回信与正确布局)
 
 document.getElementById('btnRoam').onclick = goToRoam;
 
@@ -14,13 +14,13 @@ let isVerticalScroll = false;
 let isHorizontalSwipe = false;
 
 function goToRoam() {
-    closeSidebar(); 
+    if (typeof closeSidebar === 'function') closeSidebar(); 
     roamEntries = [];
     
     // 收集所有手账
-    for(let y in db) {
-        for(let m in db[y]) {
-            db[y][m].forEach(entry => {
+    for(let y in window.db) {
+        for(let m in window.db[y]) {
+            window.db[y][m].forEach(entry => {
                 roamEntries.push({ ...entry, year: y, month: m });
             });
         }
@@ -33,9 +33,9 @@ function goToRoam() {
     }
     
     currentRoamIndex = 0;
-    historyStack.push({...state}); 
+    if (typeof historyStack !== 'undefined') historyStack.push({...state}); 
     state.level = 'roam';
-    renderRoamView(); 
+    if (typeof renderRoamView === 'function') renderRoamView(); 
 }
 
 function goToDayFromRoam(y, m, d) {
@@ -43,7 +43,7 @@ function goToDayFromRoam(y, m, d) {
     state.month = String(m);
     state.day = Number(d);
     state.level = 'day';
-    render(); 
+    if (typeof render === 'function') render(); 
 }
 
 // 🌟 1. 手指按下：关闭动画，准备跟手
@@ -90,9 +90,7 @@ function handleTouchMove(e) {
     }
 
     // 🌟 核心修正：基于 100% 宽度的平移计算
-    // 计算当前轨道应该在的位置 (百分比)
     const offsetPercent = -currentRoamIndex * 100;
-    // 计算手指移动的像素转换成容器宽度的百分比
     const movePercent = (deltaX / trackElement.offsetWidth) * 100;
     
     trackElement.style.transform = `translateX(${offsetPercent + movePercent}%)`;
@@ -118,8 +116,6 @@ function handleTouchEnd(e) {
     trackElement.style.transition = 'transform 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.05)';
     trackElement.style.transform = `translateX(-${currentRoamIndex * 100}%)`;
     
-    const counter = document.getElementById('roamCounter');
-    if (counter) counter.innerText = `🧭 漫游 (${currentRoamIndex + 1}/${roamEntries.length})`;
 }
 
 // 🌟 核心渲染引擎
@@ -129,7 +125,7 @@ function renderRoamView() {
     if (roamEntries.length === 0) {
         app.innerHTML = `
             <div class="flex flex-col items-center justify-center h-full bg-stone-100 p-6 text-center relative">
-                <button onclick="goBack('home')" class="absolute top-6 left-6 text-stone-500 font-bold flex items-center gap-1">
+                <button onclick="goBack('home')" class="absolute top-6 left-6 text-stone-500 font-bold flex items-center gap-1 bg-white px-3 py-1.5 rounded-full shadow-sm">
                     <span>←</span> 返回
                 </button>
                 <div class="text-6xl mb-4 opacity-50">🕳️</div>
@@ -146,14 +142,19 @@ function renderRoamView() {
         
         return `
             <div class="flex-shrink-0 w-full h-full flex items-center justify-center">
+                <!-- 注入长按回信属性，保留双击跳转 -->
                 <div class="w-[90%] h-[80%] max-h-[75vh] shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-3xl overflow-hidden cursor-pointer flex flex-col bg-white"
+                     ontouchstart="startLongPress('${entry.id}')" 
+                     ontouchend="cancelLongPress()" 
+                     ontouchmove="cancelLongPress()" 
+                     oncontextmenu="event.preventDefault(); openReplyModal('${entry.id}');"
                      ondblclick="goToDayFromRoam('${entry.year}', '${entry.month}', ${entry.day})">
                     
                     <div class="read-only-mode ${bgClass} p-6 sm:p-10 border-b border-stone-50 flex-1 overflow-y-auto">
                         ${entry.html}
                     </div>
                     
-                    <div class="bg-white p-5 flex justify-between items-center text-xs text-stone-400 flex-shrink-0">
+                    <div class="bg-white p-5 flex justify-between items-center text-xs text-stone-400 flex-shrink-0 pointer-events-none">
                         <div class="flex items-center gap-2 font-mono font-bold text-stone-500">
                             <span class="text-lg">🕒</span> <span>${entry.fullDateStr || entry.timeStr}</span>
                         </div>
@@ -172,11 +173,15 @@ function renderRoamView() {
              ontouchmove="handleTouchMove(event)"
              ontouchend="handleTouchEnd(event)">
             
-            <div class="flex items-center justify-between p-5 absolute top-0 w-full z-20">
-                <button onclick="goBack('home')" class="font-bold flex items-center gap-1 text-stone-400 hover:text-stone-800 transition-colors text-sm">
+            <!-- 修复布局：pointer-events-none 让空白处可以滑动，pointer-events-auto 让按钮可以点击 -->
+            <div class="flex items-center justify-between p-5 absolute top-0 w-full z-20 pointer-events-none">
+                <button onclick="goBack('home')" class="pointer-events-auto font-bold flex items-center gap-1 text-stone-400 hover:text-stone-800 transition-colors text-sm bg-white/80 px-4 py-2 rounded-full shadow-sm backdrop-blur">
                     <span>←</span> 结束
                 </button>
-                <div id="roamCounter" class="text-xs font-bold tracking-widest text-stone-300">🧭 漫游 (1/${roamEntries.length})</div>
+
+                <button onclick="goToRepliedList()" class="pointer-events-auto bg-white/80 p-2.5 rounded-full shadow-sm border border-stone-100 hover:text-rose-500 text-stone-500 transition-colors active:scale-95 backdrop-blur" title="时光信箱">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"></path></svg>
+                </button>
             </div>
 
             <div id="roamTrack" class="flex h-full w-full will-change-transform" style="transform: translateX(-${currentRoamIndex * 100}%);">

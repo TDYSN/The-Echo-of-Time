@@ -178,17 +178,19 @@ window.simplifyAddress = function(components) {
 window.initHardwareBackButton = async function() {
     if (window.Capacitor && window.Capacitor.isNativePlatform()) {
         const App = Capacitor.Plugins.App;
+        App.removeAllListeners(); // 清除旧监听，防止重复触发
         App.addListener('backButton', () => {
-            // 依赖 app.js 中的 state 和跳转逻辑
             if (state.level === 'home') App.exitApp(); 
             else if (state.level === 'editor') {
                 if(typeof attemptCancelEdit === 'function') attemptCancelEdit();
             } 
-            else if (['year', 'gallery', 'roam', 'map', 'settings', 'calendar'].includes(state.level)) goBack('home'); 
-            else if (state.level === 'month') goBack('year');
-            else if (state.level === 'day') goBack('month');
-            else if (state.level === 'articleView') goBack('day');
-            else if (state.level === 'locationDetails') { state.level = 'map'; renderMapView(); }
+            else if (['year', 'gallery', 'roam', 'map', 'calendar'].includes(state.level)) window.goBack('home'); 
+            else if (state.level === 'month') window.goBack('year');
+            // 👇 下面这四个页面直接调用咱们 V3.3.1 写好的高级 goBack() 引擎，它会自动判断要退到上一级还是退回信箱！
+            else if (state.level === 'day') window.goBack('month'); 
+            else if (state.level === 'articleView') window.goBack('day'); 
+            else if (state.level === 'repliedList' || state.level === 'settings') window.goBack(); 
+            else if (state.level === 'locationDetails') { state.level = 'map'; if(typeof renderMapView === 'function') renderMapView(); }
         });
     }
 };
