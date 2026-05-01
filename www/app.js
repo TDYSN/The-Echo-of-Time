@@ -1,97 +1,13 @@
-// 🌟 回响 APP V3.8.0 数据中枢 (修复画布溢出重合 Bug & 纯净粘贴拦截器)
-let db = {};
-let state = { level: 'home', year: null, month: null, day: null, editingId: null, currentArticleId: null };
-let editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false, title: '', device: '' };
-let historyStack = [];
-let mediaRecorder = null;
-let audioChunks = [];
-let recordTimer = null;
-let recordSeconds = 0;
-let isRecordingCancelled = false;
-let amap = null;
-let amapMarker = null;
-let tempSelectedLoc = '';
+// app.js - V4.0 纯净视图渲染层 & 状态引擎
 
-let savedRange = null;
-let isEditorDirty = false;
+window.state = { level: 'home', year: null, month: null, day: null, editingId: null, currentArticleId: null };
+window.editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false, title: '', device: '' };
+window.historyStack = [];
+window.tempSelectedLoc = '';
+window.savedRange = null;
+window.isEditorDirty = false;
 
-async function saveToLocal() {
-    try {
-        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-            const Filesystem = Capacitor.Plugins.Filesystem;
-            try { await Filesystem.mkdir({ path: 'EchoAppData', directory: 'DATA', recursive: true }); } catch (e) {}
-            await Filesystem.writeFile({ path: 'EchoAppData/database.json', data: JSON.stringify(db), directory: 'DATA', encoding: 'utf8' });
-        } else {
-            localStorage.setItem('WangShiShuJia_DB', JSON.stringify(db));
-        }
-    } catch (e) {
-        console.error("保存失败", e);
-        alert("⚠️ 数据库写入失败！\n真实原因: " + e.message);
-    }
-}
-
-async function saveMediaToDisk(base64Data, type) {
-    if (!window.Capacitor || !window.Capacitor.isNativePlatform()) return base64Data; 
-    const Filesystem = Capacitor.Plugins.Filesystem;
-    const timestamp = Date.now();
-    let folder = '', ext = '';
-
-    if (type === 'image') { folder = 'Images'; ext = 'jpg'; } 
-    else if (type === 'video') { folder = 'Videos'; ext = 'mp4'; } 
-    else if (type === 'voice') { folder = 'Audios'; ext = 'webm'; }
-
-    const fileName = `${folder.substring(0, 3).toLowerCase()}_${timestamp}.${ext}`;
-    const path = `EchoAppData/${folder}/${fileName}`;
-    const base64Content = base64Data.split(',')[1];
-
-    try {
-        const result = await Filesystem.writeFile({ path: path, data: base64Content, directory: 'DATA' });
-        return Capacitor.convertFileSrc(result.uri);
-    } catch (e) {
-        return base64Data; 
-    }
-}
-
-async function startRecording() { 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return alert("⚠️ 不支持录音。");
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (err) { return alert("⚠️ 录音权限被拒绝。"); }
-
-    try {
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-        mediaRecorder.onstop = () => {
-            const reader = new FileReader();
-            const finalDuration = recordSeconds;
-            const now = new Date();
-            const recordTime = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日${now.getHours()}点${String(now.getMinutes()).padStart(2, '0')}分`;
-            
-            reader.onload = async function(e) {
-                if (!isRecordingCancelled) {
-                    const localUrl = await saveMediaToDisk(e.target.result, 'voice');
-                    document.getElementById('journal-canvas').insertAdjacentHTML('beforeend', createBlockHTML('voice', localUrl, finalDuration, recordTime));
-                    isEditorDirty = true; 
-                }
-                isRecordingCancelled = false; 
-            };
-            reader.readAsDataURL(new Blob(audioChunks, { type: 'audio/webm' }));
-            stream.getTracks().forEach(track => track.stop());
-        };
-
-        document.getElementById('recordingModal').classList.remove('hidden'); 
-        recordSeconds = 0; document.getElementById('recordTimeDisplay').innerText = "00:00";
-        mediaRecorder.start(); 
-        
-        recordTimer = setInterval(() => {
-            recordSeconds++; document.getElementById('recordTimeDisplay').innerText = `00:${String(recordSeconds).padStart(2, '0')}`;
-            if (recordSeconds >= 60) stopRecording();
-        }, 1000);
-    } catch (err) { alert("⚠️ 录音失败：" + err.message); }
-}
-function stopRecording() { if (mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.stop(); clearInterval(recordTimer); document.getElementById('recordingModal').classList.add('hidden'); } }
-function cancelRecording() { isRecordingCancelled = true; stopRecording(); }
-
+// UI 交互辅助函数
 function toggleSidebar() { const sidebar = document.getElementById('sidebar'); sidebar.classList.contains('-translate-x-full') ? openSidebar() : closeSidebar(); }
 function openSidebar() {
     let totalDays = 0;
@@ -102,79 +18,35 @@ function openSidebar() {
 }
 function closeSidebar() { document.getElementById('sidebar').classList.add('-translate-x-full'); document.getElementById('sidebarOverlay').classList.add('hidden'); }
 
-function exportToPDF() {
-    document.getElementById('loadingOverlay').classList.remove('hidden');
-    const element = document.getElementById('printable-area');
-    const navBar = element.querySelector('.sticky');
-    if(navBar) navBar.classList.add('hidden');
-    
-    const fab = element.querySelector('.fixed.bottom-8');
-    if(fab) fab.classList.add('hidden');
+window.openLocationModal = function() { document.getElementById('locationModal').classList.remove('hidden'); };
+window.closeLocationModal = function() { document.getElementById('locationModal').classList.add('hidden'); };
+window.finalizeLocation = function(oldTitle) { 
+    const title = document.getElementById('locationModalTitle');
+    if(title) title.innerText = oldTitle; 
+    closeLocationModal(); 
+    updateLocationDOM(); 
+};
+window.setCustomLocation = function() { const input = document.getElementById('customLocationInput'); if (input.value.trim()) { editorMeta.location = input.value.trim(); isEditorDirty = true; input.value = ''; closeLocationModal(); updateLocationDOM(); } };
+window.clearLocation = function() { editorMeta.location = ''; isEditorDirty = true; closeLocationModal(); updateLocationDOM(); };
 
-    html2pdf().set({ margin: 10, filename: `回响导出.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } }).from(element).save().then(() => {
-        if(navBar) navBar.classList.remove('hidden');
-        if(fab) fab.classList.remove('hidden');
-        document.getElementById('loadingOverlay').classList.add('hidden');
-        toggleArticleMenu(); 
-    }).catch(() => {
-        if(navBar) navBar.classList.remove('hidden');
-        if(fab) fab.classList.remove('hidden');
-        document.getElementById('loadingOverlay').classList.add('hidden');
-        toggleArticleMenu();
-    });
-}
+window.openWeatherModal = function() { document.getElementById('weatherModal').classList.remove('hidden'); };
+window.closeWeatherModal = function() { document.getElementById('weatherModal').classList.add('hidden'); };
+window.selectWeather = function(w) { 
+    editorMeta.weather = w; isEditorDirty = true; closeWeatherModal(); 
+    const wd = document.getElementById('weatherDisplay');
+    if (wd) wd.innerText = w || '🌤️ 天气';
+    const awd = document.getElementById('articleWeatherDisplay');
+    if (awd) awd.innerText = w || '(无天气信息)';
+};
 
-function openLocationModal() { document.getElementById('locationModal').classList.remove('hidden'); }
-function closeLocationModal() { document.getElementById('locationModal').classList.add('hidden'); }
-function simplifyAddress(components) {
-    let city = components.city && typeof components.city === 'string' ? components.city : components.province;
-    let district = components.district || components.township || "";
-    return city.replace(/省|市/g, '') + district.replace(/区|街道|镇|乡/g, '');
-}
-
-async function getLocationFromDevice() {
-    const title = document.getElementById('locationModalTitle'); const oldTitle = title.innerText; title.innerText = "卫星连接中...";
-    let isResolved = false;
-    const timeoutSafeLock = setTimeout(() => { if (!isResolved) { isResolved = true; title.innerText = oldTitle; closeLocationModal(); alert("⚠️ 定位超时"); } }, 10000);
-    try {
-        let lat, lon;
-        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-            const Geolocation = Capacitor.Plugins.Geolocation;
-            const permission = await Geolocation.requestPermissions();
-            if (permission.location !== 'granted') { clearTimeout(timeoutSafeLock); isResolved = true; title.innerText = oldTitle; return alert("⚠️ 拒绝定位"); }
-            let position;
-            try { position = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 4000, maximumAge: 30000 }); } 
-            catch (e) { position = await Geolocation.getCurrentPosition({ enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }); }
-            lat = position.coords.latitude; lon = position.coords.longitude;
-        } else {
-            await new Promise((resolve, reject) => { navigator.geolocation.getCurrentPosition(pos => { lat = pos.coords.latitude; lon = pos.coords.longitude; resolve(); }, err => reject(err), { enableHighAccuracy: true, timeout: 8000 }); });
-        }
-        if (typeof AMap !== 'undefined') {
-            AMap.plugin('AMap.Geocoder', function() {
-                var geocoder = new AMap.Geocoder({ city: "010" });
-                geocoder.getAddress([lon, lat], function(status, result) {
-                    editorMeta.location = (status === 'complete' && result.regeocode) ? simplifyAddress(result.regeocode.addressComponent) : `E${lon.toFixed(2)} N${lat.toFixed(2)}`;
-                    isEditorDirty = true;
-                    finalizeLocation(oldTitle);
-                });
-            });
-        } else {
-            if (isResolved) return; clearTimeout(timeoutSafeLock); isResolved = true;
-            editorMeta.location = `东经${lon.toFixed(2)} 北纬${lat.toFixed(2)}`;
-            isEditorDirty = true;
-            finalizeLocation(oldTitle);
-        }
-    } catch (error) { if (isResolved) return; clearTimeout(timeoutSafeLock); isResolved = true; alert("⚠️ 定位失败: " + error.message); title.innerText = oldTitle; }
-}
-
-function updateLocationDOM() {
+window.updateLocationDOM = function() {
     const ld = document.getElementById('locDisplay');
     if (ld) ld.innerText = editorMeta.location || '定位';
     const ald = document.getElementById('articleLocDisplay');
     if (ald) ald.innerText = editorMeta.location || '(无位置信息)';
-}
+};
 
-function updateDateDOM() {
+window.updateDateDOM = function() {
     const entryD = new Date(editorMeta.date);
     const mm = entryD.getMonth() + 1, dd = entryD.getDate();
     const hrs = String(entryD.getHours()).padStart(2, '0'), mins = String(entryD.getMinutes()).padStart(2, '0');
@@ -187,25 +59,12 @@ function updateDateDOM() {
 
     const display = document.getElementById('topBarDateDisplay');
     if (display) display.innerText = dateStr;
-}
+};
 
-function finalizeLocation(oldTitle) { document.getElementById('locationModalTitle').innerText = oldTitle; closeLocationModal(); updateLocationDOM(); }
-function setCustomLocation() { const input = document.getElementById('customLocationInput'); if (input.value.trim()) { editorMeta.location = input.value.trim(); isEditorDirty = true; input.value = ''; closeLocationModal(); updateLocationDOM(); } }
-function clearLocation() { editorMeta.location = ''; isEditorDirty = true; closeLocationModal(); updateLocationDOM(); }
-function openWeatherModal() { document.getElementById('weatherModal').classList.remove('hidden'); }
-function closeWeatherModal() { document.getElementById('weatherModal').classList.add('hidden'); }
+window.goToSettings = function() { closeSidebar(); historyStack.push({...state}); state.level = 'settings'; render(); };
 
-function selectWeather(w) { 
-    editorMeta.weather = w; isEditorDirty = true; closeWeatherModal(); 
-    const wd = document.getElementById('weatherDisplay');
-    if (wd) wd.innerText = w || '🌤️ 天气';
-    const awd = document.getElementById('articleWeatherDisplay');
-    if (awd) awd.innerText = w || '(无天气信息)';
-}
-
-function goToSettings() { closeSidebar(); historyStack.push({...state}); state.level = 'settings'; render(); }
-
-function render() {
+// 🌟 主渲染引擎 (保持不变，因为这是核心视图逻辑)
+window.render = function() {
     const app = document.getElementById('app');
     
     if (state.level === 'home') {
@@ -306,11 +165,12 @@ function render() {
                 const dateDisplay = `${entryD.getMonth() + 1}月${entryD.getDate()}日 ${wd}`;
 
                 return `
-                <div class="mb-8 bg-white rounded-[10px] shadow-[0_2px_15px_-4px_rgba(0,0,0,0.08)] border border-stone-100 cursor-pointer overflow-hidden transition-all hover:shadow-md hover:-translate-y-1" onclick="openArticle('${entry.id}')">
+                <div class="mb-8 bg-white rounded-[24px] shadow-[0_2px_15px_-4px_rgba(0,0,0,0.08)] border border-stone-100 cursor-pointer overflow-hidden transition-all hover:shadow-md hover:-translate-y-1" onclick="openArticle('${entry.id}')">
                     ${coverImageHtml}
                     <div class="p-5">
                         <div class="flex justify-between items-center mb-3 text-[11px] text-stone-400 font-medium tracking-wide">
                             <span>${dateDisplay}</span>
+                            <span>未同步</span>
                         </div>
                         ${entry.title ? `<h3 class="text-lg font-bold text-stone-800 mb-2 tracking-wide">《${entry.title}》</h3>` : ''}
                         <div class="text-sm text-stone-700 line-clamp-3 leading-relaxed indent-7 mb-3">
@@ -466,8 +326,6 @@ function render() {
 
         let contentHtml = '';
         if (isArticle) {
-            // 🌟 核心修复点 1: 重构了外部容器结构，采用 min-h-full flex-col，确保不论多长的文本都能将底部元数据往下推，不再重叠。
-            // 🌟 核心修复点 2: 给 canvas 加了 handleArticlePaste，拦截粘贴的富文本样式。
             contentHtml = `
                 <div class="flex-1 overflow-y-auto bg-[#faf9f6] relative">
                     <div class="flex flex-col min-h-full p-6 pb-24">
@@ -638,7 +496,7 @@ function render() {
                 <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.0.1</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.8.0</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -673,7 +531,10 @@ function render() {
     }
 }
 
-// 🌟 纯净粘贴拦截器：过滤所有的外部富文本样式，只保留纯文本，彻底解决外部CSS破坏排版的问题
+// ========================
+// 交互、功能函数区域
+// ========================
+
 window.handleArticlePaste = function(e) {
     e.preventDefault();
     const text = (e.originalEvent || e).clipboardData.getData('text/plain');
@@ -704,7 +565,7 @@ window.confirmSave = function() {
     saveJournal();
 };
 
-function getArticlePlainText(id) {
+window.getArticlePlainText = function(id) {
     const entry = db[state.year][state.month].find(x => x.id === id);
     let tempDiv = document.createElement('div');
     tempDiv.innerHTML = entry.html;
@@ -809,7 +670,7 @@ window.applyIndent = function() {
     saveCursorPosition();
 };
 
-function calculateWordCount() {
+window.calculateWordCount = function() {
     let totalWords = 0;
     if (editorMeta.isArticleMode) {
         const canvas = document.getElementById('article-canvas');
@@ -837,7 +698,7 @@ function calculateWordCount() {
     }
 }
 
-function toggleArticleMode() {
+window.toggleArticleMode = function() {
     const wasArticle = editorMeta.isArticleMode;
     editorMeta.isArticleMode = !editorMeta.isArticleMode;
     editorMeta.hasPromptedArticle = true; 
@@ -859,7 +720,7 @@ function toggleArticleMode() {
     }, 50);
 }
 
-function renderAddButton() {
+window.renderAddButton = function() {
     return `
     <div class="absolute bottom-8 left-1/2 -translate-x-1/2 z-40 no-print">
         <button onclick="document.getElementById('createMenuModal').classList.remove('hidden')" class="bg-cyan-600 text-white w-16 h-16 rounded-full shadow-[0_8px_20px_rgba(8,145,178,0.4)] text-4xl font-light hover:scale-110 hover:bg-cyan-500 transition-all flex items-center justify-center pb-2">+</button>
@@ -887,14 +748,14 @@ function renderAddButton() {
     </div>`;
 }
 
-function formatDateTimeLocal(d) { const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
-function updateMetaDate(val) { editorMeta.date = val; }
-function goToYear(y) { state.level = 'year'; state.year = y; render(); }
-function goToMonth(m) { state.level = 'month'; state.month = m; render(); }
-function goToDay(d) { state.level = 'day'; state.day = d; render(); }
-function openArticle(id) { historyStack.push({...state}); state.level = 'articleView'; state.currentArticleId = id; render(); }
+window.formatDateTimeLocal = function(d) { const pad = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+window.updateMetaDate = function(val) { editorMeta.date = val; }
+window.goToYear = function(y) { state.level = 'year'; state.year = y; render(); }
+window.goToMonth = function(m) { state.level = 'month'; state.month = m; render(); }
+window.goToDay = function(d) { state.level = 'day'; state.day = d; render(); }
+window.openArticle = function(id) { historyStack.push({...state}); state.level = 'articleView'; state.currentArticleId = id; render(); }
 
-function goToEditor(type = 'journal') { 
+window.goToEditor = function(type = 'journal') { 
     document.getElementById('createMenuModal')?.classList.add('hidden');
     isEditorDirty = false; 
     
@@ -906,10 +767,10 @@ function goToEditor(type = 'journal') {
     historyStack.push({...state}); state.level = 'editor'; state.editingId = null; render(); 
 }
 
-function cancelEdit() { state = historyStack.pop() || { level: 'home', year: null, month: null, day: null }; render(); }
-function goBack(target) { if (target) state.level = target; render(); }
+window.cancelEdit = function() { state = historyStack.pop() || { level: 'home', year: null, month: null, day: null }; render(); }
+window.goBack = function(target) { if (target) state.level = target; render(); }
 
-function saveJournal() {
+window.saveJournal = function() {
     let htmlContent = '';
 
     if (editorMeta.isArticleMode) {
@@ -952,7 +813,7 @@ function saveJournal() {
     render();
 }
 
-function editEntry(id) {
+window.editEntry = function(id) {
     const entry = db[state.year][state.month].find(x => x.id === id);
     const pad = n => String(n).padStart(2, '0');
     isEditorDirty = false; 
@@ -960,9 +821,9 @@ function editEntry(id) {
     historyStack.push({...state}); state.level = 'editor'; state.editingId = id; render();
 }
 
-function deleteEntry(id) { if (confirm("确定要删除这条记录吗？无法恢复哦。")) { db[state.year][state.month] = db[state.year][state.month].filter(x => x.id !== id); saveToLocal(); render(); } }
+window.deleteEntry = function(id) { if (confirm("确定要删除这条记录吗？无法恢复哦。")) { db[state.year][state.month] = db[state.year][state.month].filter(x => x.id !== id); saveToLocal(); render(); } }
 
-function createBlockHTML(type, url = '', duration = 0, timestamp = '') {
+window.createBlockHTML = function(type, url = '', duration = 0, timestamp = '') {
     let inner = ''; 
     if (type === 'text') inner = `<textarea class="w-full bg-transparent border-none resize-none text-stone-700 text-base leading-relaxed placeholder-stone-300" rows="2" placeholder="记录此刻..." oninput="this.style.height='';this.style.height=this.scrollHeight+'px';calculateWordCount(); isEditorDirty = true;"></textarea>`;
     else if (type === 'image') inner = `<img src="${url}" class="max-w-full rounded-lg shadow-sm border border-stone-200 mt-2">`;
@@ -983,7 +844,7 @@ function createBlockHTML(type, url = '', duration = 0, timestamp = '') {
     return `<div class="block-item relative group bg-white/40 backdrop-blur-sm p-2 rounded-xl border border-transparent hover:border-stone-200 transition-colors"><div class="absolute -left-2 top-1/2 -translate-y-1/2 flex-col gap-1 hidden group-hover:flex z-10 no-print"><button onclick="moveBlock(this, 'up')" class="bg-white border border-stone-200 text-stone-500 rounded-t text-[10px] w-5 h-5 shadow-sm hover:bg-stone-50">▲</button><button onclick="moveBlock(this, 'down')" class="bg-white border border-stone-200 text-stone-500 rounded-b text-[10px] w-5 h-5 shadow-sm hover:bg-stone-50">▼</button></div><button onclick="this.parentElement.remove(); isEditorDirty = true; setTimeout(calculateWordCount, 50);" class="absolute -right-2 -top-2 bg-stone-300 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] shadow-sm hidden group-hover:flex hover:bg-rose-500 transition-colors z-10 no-print">✕</button>${inner}</div>`;
 }
 
-function addBlock(type, event) {
+window.addBlock = function(type, event) {
     const canvas = document.getElementById('journal-canvas');
     if (!canvas) return;
     if ((type === 'image' || type === 'video') && event.target.files[0]) {
@@ -1001,14 +862,14 @@ function addBlock(type, event) {
         canvas.scrollTop = canvas.scrollHeight; 
     }
 }
-function moveBlock(button, direction) { const block = button.parentElement.parentElement; if (direction === 'up' && block.previousElementSibling) block.previousElementSibling.before(block); else if (direction === 'down' && block.nextElementSibling) block.nextElementSibling.after(block); }
-function toggleVoice(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgPlay = btn.querySelector('.svg-play'); const svgPause = btn.querySelector('.svg-pause'); if (audio.paused) { document.querySelectorAll('.voice-player').forEach(a => { if(!a.paused && a !== audio) { a.pause(); resetVoiceProgress(a); } }); audio.play(); svgPlay.classList.add('hidden'); svgPause.classList.remove('hidden'); } else { audio.pause(); svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } }
-function updateVoiceProgress(audio) { const container = audio.closest('.voice-container'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const currentSeconds = Math.floor(audio.currentTime); const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1); progressBar.style.width = `${(audio.currentTime / totalSeconds) * 100}%`; timeDisplay.innerText = `0:${String(currentSeconds).padStart(2, '0')}`; }
-function resetVoiceProgress(audio) { const container = audio.closest('.voice-container'); const svgPlay = container.querySelector('.svg-play'); const svgPause = container.querySelector('.svg-pause'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const duration = container.getAttribute('data-duration'); audio.currentTime = 0; progressBar.style.width = '0%'; if(svgPlay && svgPause) { svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } timeDisplay.innerText = duration > 0 ? `0:${String(Math.floor(duration)).padStart(2, '0')}` : '0:00'; }
-function toggleMute(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgOn = btn.querySelector('.svg-on'); const svgOff = btn.querySelector('.svg-off'); audio.muted = !audio.muted; if (audio.muted) { svgOn.classList.add('hidden'); svgOff.classList.remove('hidden'); } else { svgOn.classList.remove('hidden'); svgOff.classList.add('hidden'); } }
-function toggleMenu(btn) { const menu = btn.nextElementSibling; document.querySelectorAll('.voice-menu').forEach(m => { if (m !== menu) m.classList.add('hidden'); }); menu.classList.toggle('hidden'); }
-function closeMapPicker() { document.getElementById('mapPickerModal').classList.add('hidden'); }
-function openMapPicker() {
+window.moveBlock = function(button, direction) { const block = button.parentElement.parentElement; if (direction === 'up' && block.previousElementSibling) block.previousElementSibling.before(block); else if (direction === 'down' && block.nextElementSibling) block.nextElementSibling.after(block); }
+window.toggleVoice = function(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgPlay = btn.querySelector('.svg-play'); const svgPause = btn.querySelector('.svg-pause'); if (audio.paused) { document.querySelectorAll('.voice-player').forEach(a => { if(!a.paused && a !== audio) { a.pause(); resetVoiceProgress(a); } }); audio.play(); svgPlay.classList.add('hidden'); svgPause.classList.remove('hidden'); } else { audio.pause(); svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } }
+window.updateVoiceProgress = function(audio) { const container = audio.closest('.voice-container'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const currentSeconds = Math.floor(audio.currentTime); const totalSeconds = parseFloat(container.getAttribute('data-duration')) || (audio.duration || 1); progressBar.style.width = `${(audio.currentTime / totalSeconds) * 100}%`; timeDisplay.innerText = `0:${String(currentSeconds).padStart(2, '0')}`; }
+window.resetVoiceProgress = function(audio) { const container = audio.closest('.voice-container'); const svgPlay = container.querySelector('.svg-play'); const svgPause = container.querySelector('.svg-pause'); const timeDisplay = container.querySelector('.time-display'); const progressBar = container.querySelector('.progress-bar'); const duration = container.getAttribute('data-duration'); audio.currentTime = 0; progressBar.style.width = '0%'; if(svgPlay && svgPause) { svgPlay.classList.remove('hidden'); svgPause.classList.add('hidden'); } timeDisplay.innerText = duration > 0 ? `0:${String(Math.floor(duration)).padStart(2, '0')}` : '0:00'; }
+window.toggleMute = function(btn) { const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const svgOn = btn.querySelector('.svg-on'); const svgOff = btn.querySelector('.svg-off'); audio.muted = !audio.muted; if (audio.muted) { svgOn.classList.add('hidden'); svgOff.classList.remove('hidden'); } else { svgOn.classList.remove('hidden'); svgOff.classList.add('hidden'); } }
+window.toggleMenu = function(btn) { const menu = btn.nextElementSibling; document.querySelectorAll('.voice-menu').forEach(m => { if (m !== menu) m.classList.add('hidden'); }); menu.classList.toggle('hidden'); }
+window.closeMapPicker = function() { document.getElementById('mapPickerModal').classList.add('hidden'); }
+window.openMapPicker = function() {
     closeLocationModal(); document.getElementById('mapPickerModal').classList.remove('hidden');
     if (!amap) {
         setTimeout(() => {
@@ -1034,45 +895,3 @@ function openMapPicker() {
         }, 100);
     }
 }
-document.getElementById('confirmMapLoc').onclick = function() { if (tempSelectedLoc) { editorMeta.location = tempSelectedLoc; isEditorDirty = true; closeMapPicker(); updateLocationDOM(); } else alert("请先在地图上点一个位置"); };
-
-async function downloadAudio(btn) {
-    const container = btn.closest('.voice-container'); const audio = container.querySelector('.voice-player'); const menu = btn.closest('.voice-menu'); menu.classList.add('hidden');
-    const recordedTime = container.getAttribute('data-recorded-at') || '未知时间'; const fileName = `回响APP_语音_${Date.now()}.webm`;
-    try {
-        if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-            const Filesystem = Capacitor.Plugins.Filesystem; const Share = Capacitor.Plugins.Share;
-            const base64Data = audio.src.split(',')[1];
-            await Filesystem.writeFile({ path: fileName, data: base64Data, directory: 'CACHE' });
-            const uriResult = await Filesystem.getUri({ path: fileName, directory: 'CACHE' });
-            await Share.share({ title: '回响语音分享', text: `语音记录，时间是${recordedTime}。`, url: uriResult.uri, dialogTitle: '保存或分享' });
-        } else { const a = document.createElement('a'); a.href = audio.src; a.download = fileName; a.click(); }
-    } catch (error) { alert("❌ 操作失败: " + error.message); }
-}
-
-async function initFileSystem() {
-    if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-        const Filesystem = Capacitor.Plugins.Filesystem; const dirs = ['EchoAppData', 'EchoAppData/Images', 'EchoAppData/Videos', 'EchoAppData/Audios'];
-        await Promise.all(dirs.map(async (dir) => { try { await Filesystem.stat({ path: dir, directory: 'DATA' }); } catch (e) { try { await Filesystem.mkdir({ path: dir, directory: 'DATA', recursive: true }); } catch (err) {} } }));
-        try { const result = await Filesystem.readFile({ path: 'EchoAppData/database.json', directory: 'DATA', encoding: 'utf8' }); db = JSON.parse(result.data); } 
-        catch (e) { let oldData = localStorage.getItem('WangShiShuJia_DB'); db = oldData ? JSON.parse(oldData) : {}; await saveToLocal(); alert("欢迎来到，时间的回响"); }
-    } else { let oldData = localStorage.getItem('WangShiShuJia_DB'); db = oldData ? JSON.parse(oldData) : {}; }
-    render();
-}
-initFileSystem();
-
-async function initHardwareBackButton() {
-    if (window.Capacitor && window.Capacitor.isNativePlatform()) {
-        const App = Capacitor.Plugins.App;
-        App.addListener('backButton', () => {
-            if (state.level === 'home') App.exitApp(); 
-            else if (state.level === 'editor') attemptCancelEdit(); 
-            else if (['year', 'gallery', 'roam', 'map', 'settings', 'calendar'].includes(state.level)) goBack('home'); 
-            else if (state.level === 'month') goBack('year');
-            else if (state.level === 'day') goBack('month');
-            else if (state.level === 'articleView') goBack('day');
-            else if (state.level === 'locationDetails') { state.level = 'map'; renderMapView(); }
-        });
-    }
-}
-initHardwareBackButton();

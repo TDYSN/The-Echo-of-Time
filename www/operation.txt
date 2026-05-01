@@ -1,0 +1,46 @@
+VS Code
+1. Ctrl + S 保存。
+2. npx cap copy 同步。
+3. Android Studio 运行 ▷。
+
+
+GIT上传：
+1. 清空过去的错误代理：在终端依次输入并回车：
+    git config --global --unset http.proxy
+    git config --global --unset https.proxy
+2. 找到代理端口，告诉 Git 走代理
+    git config --global http.proxy http://127.0.0.1:7897
+    git config --global https.proxy http://127.0.0.1:7897
+
+
+UI 颜色选择网站：https://tailwindcss.com/docs/colors 
+
+UI：圆角
+rounded-md：很小的圆角（稍微有点钝角的感觉）。
+rounded-lg：中等圆角（比现在小一点，比较中规中矩）。
+rounded-xl：你目前在用的（偏圆润）。
+rounded-2xl：非常圆润的方块。
+rounded-full：完全变成正圆形（很多文艺 APP 喜欢用纯圆形，你可以试试这个）。
+
+
+架构：
+    Echo/ （你的项目根目录）
+    ├── capacitor.config.json
+    ├── package.json
+    ├── android/              <-- Capacitor 自动生成的原生安卓壳子 (不用管)
+    └── www/                  <-- 🌟 咱们纯前端的绝对核心战场
+        │
+        ├── index.html        <-- 唯一入口，负责按顺序加载底层脚本
+        ├── style.css         <-- 全局样式 (Tailwind 兜底的自定义样式)
+        │
+        ├── core/             <-- 🛠️ 核心基建与原生能力 (与业务无关的底层)
+        │   ├── storage.js    <-- 数据库操作、文件读写、Capacitor Filesystem
+        │   └── device.js     <-- 录音引擎、高德定位、导出 PDF、系统分享等
+        │
+        ├── modules/          <-- 🚀 业务功能模块 (各自独立，互不干扰)
+        │   ├── gallery.js    <-- 图库模块逻辑
+        │   ├── calendar.js   <-- 日历模块逻辑
+        │   ├── map.js        <-- 足迹地图逻辑
+        │   └── roam.js       <-- 漫游卡片滑动逻辑
+        │
+        └── app.js            <-- 🧠 主引擎与状态路由 (控制页面切换和主渲染)

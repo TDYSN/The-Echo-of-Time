@@ -127,11 +127,20 @@
     </script>
     <script type="text/javascript" src="https://webapi.amap.com/maps?v=2.0&key=378f2db27ff0e5e9935886287f46eec3"></script>
     
-    <script src="app.js"></script>
-    <script src="gallery.js"></script>
-    <script src="roam.js"></script>
-    <script src="map.js"></script>
-    <script src="calendar.js"></script> <script src="app.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
+<!-- 1. 核心基建 (必须最先加载) -->
+    <script src="core/storage.js"></script>
+    <script src="core/device.js"></script>
+    
+    <!-- 2. 独立业务模块 -->
+    <script src="modules/map.js"></script>
+    <script src="modules/roam.js"></script>
+    <script src="modules/gallery.js"></script>
+    <script src="modules/calendar.js"></script>
+    
+    <!-- 3. 主引擎 (最后启动) -->
+    <script src="app.js"></script>
 </body>
 </html>
