@@ -4,24 +4,33 @@ let currentCalYear = new Date().getFullYear();
 let isYearPickerOpen = false;
 
 window.goToCalendar = function() {
+    if (typeof closeSidebar === 'function') closeSidebar(); // 点击后关闭侧边栏
     historyStack.push({...state});
     state.level = 'calendar';
-    
     currentCalYear = new Date().getFullYear();
     window.hasScrolledToCurrentMonth = false; 
-    
     renderCalendarView();
 }
 
-// 🌟 修复一：专属的退出日历逻辑，确保完美切回图库
+// 🌟 修复一：智能退回上一个页面，不再硬编码写死某个模块
 window.exitCalendar = function() {
-    historyStack.pop(); // 弹出日历的历史记录
-    state.level = 'gallery'; // 状态拨回图库
-    // 强制调用图库专属的渲染引擎
-    if (typeof renderGalleryView === 'function') {
-        renderGalleryView(); 
+    if (window.historyStack && window.historyStack.length > 0) {
+        // 弹出历史记录并完美恢复到进入日历前的状态
+        state = window.historyStack.pop(); 
     } else {
-        render(); // 兜底
+        // 兜底安全策略：如果没有历史记录，就回首页
+        state.level = 'home';
+    }
+
+    // 智能分发渲染权：根据恢复后的状态，调用对应的渲染引擎
+    if (state.level === 'gallery' && typeof renderGalleryView === 'function') {
+        renderGalleryView(); 
+    } else if (state.level === 'map' && typeof renderMapView === 'function') {
+        renderMapView();
+    } else if (state.level === 'roam' && typeof renderRoamView === 'function') {
+        renderRoamView();
+    } else {
+        render(); // 兜底交还给 app.js 的主渲染引擎 (例如返回主页 home)
     }
 }
 

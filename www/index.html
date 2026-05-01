@@ -38,9 +38,20 @@
             <div onclick="goToMap()" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors">
                 <span class="text-xl text-stone-400">🗺️</span> 地图
             </div>
+            <div onclick="goToCalendar()" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors">
+            <span class="text-xl text-stone-400">📅</span> 日历
+             </div>
+
+             <div onclick="goToRepliedList()" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors">
+            <span class="text-xl text-stone-400">📮</span> 信箱
+             </div>
+
             <div onclick="goToSettings()" class="flex items-center gap-4 cursor-pointer hover:text-cyan-600 transition-colors mt-8 pt-6 border-t border-stone-100">
                 <span class="text-xl text-stone-400">⚙️</span> 设置
             </div>
+        </div>
+
+
         </div>
     </div>
 
@@ -83,11 +94,21 @@
                         <span class="text-[10px] text-stone-400">打开大地图手动选择定位</span>
                     </div>
                 </button>
-                <div class="flex items-center gap-2 p-2 border border-stone-200 rounded-2xl focus-within:border-cyan-500 focus-within:ring-1 focus-within:ring-cyan-500 transition-all">
-                    <span class="text-xl pl-2">✍️</span>
-                    <input type="text" id="customLocationInput" placeholder="手动输入地名..." class="flex-1 bg-transparent outline-none text-sm text-stone-700 px-2 py-2">
-                    <button onclick="setCustomLocation()" class="bg-stone-800 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-stone-700 transition-colors">确定</button>
-                </div>
+    <!-- 替换 index.html 中的自定义定位输入框代码 -->
+    <div class="flex items-center gap-2 p-1.5 border border-stone-200 rounded-2xl focus-within:border-cyan-500 focus-within:ring-1 focus-within:ring-cyan-500 transition-all bg-stone-50">
+        
+        <!-- 🌟 回归统一风格：圆形彩色底块 + Emoji -->
+        <div class="flex items-center justify-center w-9 h-9 rounded-full bg-amber-100 text-lg ml-1 shrink-0">
+            ✍️
+        </div>
+        
+        <!-- 输入框，去掉了生硬的背景，字体颜色调整更柔和高级 -->
+        <input type="text" id="customLocationInput" placeholder="手动输入地名..." class="flex-1 bg-transparent outline-none text-sm text-stone-700 px-2 py-2 placeholder-stone-400 font-medium">
+        
+        <!-- 确认按钮也改成了呼应主题的青色 (Cyan)，并加入了按压动画和微发光投影 -->
+        <button onclick="setCustomLocation()" class="bg-cyan-600 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md shadow-cyan-600/20 hover:bg-cyan-500 active:scale-95 transition-all">
+            确认
+        </button>
             </div>
             <button onclick="clearLocation()" class="w-full mt-6 py-3 bg-stone-100 text-stone-500 rounded-xl font-bold hover:bg-stone-200 transition-colors text-sm">清除定位 / 无</button>
         </div>

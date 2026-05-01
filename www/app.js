@@ -85,7 +85,15 @@ function openSidebar() {
 }
 function closeSidebar() { document.getElementById('sidebar').classList.add('-translate-x-full'); document.getElementById('sidebarOverlay').classList.add('hidden'); }
 
-window.openLocationModal = function() { document.getElementById('locationModal').classList.remove('hidden'); };
+// 修改 app.js 中的 openLocationModal 函数
+window.openLocationModal = function() { 
+    const input = document.getElementById('customLocationInput');
+    // 如果当前已经有定位了，就把原定位填进去方便修改；如果没有就留空
+    if (input) {
+        input.value = (window.editorMeta && window.editorMeta.location) ? window.editorMeta.location : '';
+    }
+    document.getElementById('locationModal').classList.remove('hidden'); 
+};
 window.closeLocationModal = function() { document.getElementById('locationModal').classList.add('hidden'); };
 window.finalizeLocation = function(oldTitle) { 
     const title = document.getElementById('locationModalTitle');
@@ -250,14 +258,13 @@ window.render = function() {
                 const dateDisplay = `${entryD.getMonth() + 1}月${entryD.getDate()}日 ${wd}`;
 
                 return `
-                <div class="mb-8 bg-white rounded-[24px] shadow-[0_2px_15px_-4px_rgba(0,0,0,0.08)] border border-stone-100 cursor-pointer overflow-hidden transition-all hover:shadow-md hover:-translate-y-1" 
+                <div class="mb-8 bg-white rounded-[10px] shadow-[0_2px_15px_-4px_rgba(0,0,0,0.08)] border border-stone-100 cursor-pointer overflow-hidden transition-all hover:shadow-md hover:-translate-y-1" 
                      ontouchstart="startLongPress('${entry.id}')" ontouchend="cancelLongPress()" ontouchmove="cancelLongPress()" oncontextmenu="event.preventDefault(); openReplyModal('${entry.id}');"
                      onclick="if(!window.isLongPressing) openArticle('${entry.id}')">
                     ${coverImageHtml}
                     <div class="p-5">
                         <div class="flex justify-between items-center mb-3 text-[11px] text-stone-400 font-medium tracking-wide">
                             <span>${dateDisplay}</span>
-                            <span>未同步</span>
                         </div>
                         ${entry.title ? `<h3 class="text-lg font-bold text-stone-800 mb-2 tracking-wide">《${entry.title}》</h3>` : ''}
                         <div class="text-sm text-stone-700 line-clamp-3 leading-relaxed indent-7 mb-3">${plainText}</div>
@@ -316,6 +323,25 @@ window.render = function() {
         
         const entryDate = new Date(entry.fullDateStr.replace(' ', 'T'));
         const weekDays = ['周日','周一','周二','周三','周四','周五','周六'];
+
+        // 🌟 新增：解析回信模块的 HTML (包含删除回信的粉色垃圾桶)
+        let repliesHtml = '';
+        if (entry.replies && entry.replies.length > 0) {
+            repliesHtml = entry.replies.map(r => `
+                <div class="pt-4 border-t border-dashed border-rose-200 bg-rose-50/30 px-5 pb-4 relative group first:border-t-0">
+                    <button onclick="event.stopPropagation(); deleteReply('${state.year}', '${state.month}', '${entry.id}', '${r.id}')" class="absolute right-4 top-4 text-rose-300 hover:text-rose-500 p-1.5 active:scale-90 transition-transform">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+                    <div class="flex items-center gap-2 mb-2 pr-8">
+                        <span class="text-sm font-serif font-bold text-rose-500">💌 来自未来的回信</span>
+                        <span class="text-[10px] text-rose-400/60 font-mono">${r.dateStr}</span>
+                    </div>
+                    <div class="text-[13px] text-stone-600 leading-relaxed indent-6 font-medium pr-2">
+                        ${r.content}
+                    </div>
+                </div>
+            `).join('');
+        }
         
         app.innerHTML = `
             <div class="h-full bg-[#faf9f6] flex flex-col relative overflow-y-auto" id="printable-area">
@@ -345,16 +371,31 @@ window.render = function() {
                     </div>
                 </div>
 
-                <div class="px-6 pb-32 pt-2">
-                    <div class="flex items-center gap-4 mb-8 text-stone-400 border-b border-stone-100 pb-5">
-                        <div class="text-5xl font-light text-stone-500">${entryDate.getDate()}</div>
-                        <div class="flex flex-col text-[10px] font-medium leading-tight">
-                            <div>${entryDate.getMonth() + 1}月 / ${weekDays[entryDate.getDay()]}</div>
-                            <div>${entry.timeStr}</div>
+                <div class="px-6 pb-32 pt-4">
+                    <!-- 🌟 压缩优化后的文章时间栏 -->
+                    <div class="flex items-center justify-between mb-6 text-stone-400 border-b border-stone-100 pb-3">
+                        <div class="flex items-center gap-3">
+                            <div class="text-3xl font-serif font-bold text-cyan-600">${entryDate.getDate()}</div>
+                            <div class="flex flex-col text-[10px] font-medium leading-tight tracking-wide gap-0.5">
+                                <span class="text-stone-500 uppercase">${entryDate.getFullYear()}年${entryDate.getMonth() + 1}月 / ${weekDays[entryDate.getDay()]}</span>
+                                <span>${entry.timeStr}</span>
+                            </div>
                         </div>
                     </div>
+                    
                     ${entry.title ? `<h1 class="text-xl font-bold text-stone-800 mb-6 tracking-wide">《${entry.title}》</h1>` : ''}
+                    
                     <div class="read-only-mode article-content text-stone-700 leading-loose">${entry.html}</div>
+
+                    <!-- 🌟 新增的文章底部回信展示区 & 回信按钮 -->
+                    <div class="mt-12 border-t border-stone-100 pt-8 no-print">
+                        <h3 class="text-sm font-bold text-stone-400 tracking-widest uppercase mb-4 pl-1">TIME REPLIES</h3>
+                        ${repliesHtml ? `<div class="rounded-2xl overflow-hidden border border-rose-100/60 shadow-sm mb-6 bg-white">${repliesHtml}</div>` : ''}
+                        
+                        <button onclick="openReplyModal('${entry.id}')" class="w-full py-3.5 bg-rose-50 text-rose-500 font-bold rounded-2xl hover:bg-rose-100 transition-colors flex items-center justify-center gap-2 shadow-sm border border-rose-100/50 active:scale-[0.98]">
+                            <span class="text-lg">❤</span> 给当时的自己写封回信吧~
+                        </button>
+                    </div>
                 </div>
 
                 <div class="fixed bottom-8 right-8 z-40 no-print">
@@ -580,19 +621,19 @@ window.render = function() {
     else if (state.level === 'settings') {
         app.innerHTML = `
             <div class="p-6 h-full overflow-y-auto bg-stone-50">
-                <div class="-mx-6 -mt-6 px-6 pt-6 pb-2 mb-8 sticky top-0 bg-stone-50/95 backdrop-blur z-10 flex items-center justify-between">
-                    <button onclick="goBack('home')" class="flex items-center gap-1 text-stone-500 font-bold hover:text-stone-800 bg-white px-3 py-1.5 rounded-full shadow-sm text-sm border border-stone-100">
-                        <span>←</span> 返回
-                    </button>
-                    <div class="text-right">
-                        <h1 class="text-2xl font-serif font-bold text-stone-800">系统设置</h1>
-                    </div>
+            <div class="-mx-6 -mt-6 px-6 pt-2 pb-3 mb-4 sticky top-0 bg-stone-50/95 backdrop-blur z-10 flex items-center justify-between shadow-[0_4px_15px_-10px_rgba(0,0,0,0.05)] border-b border-stone-100/50">
+                <button onclick="goBack('home')" class="flex items-center gap-1 text-stone-500 font-bold hover:text-stone-800 bg-white px-3 py-1.5 rounded-full shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] text-sm border border-stone-100 active:scale-95 transition-transform">
+                    <span>←</span> 返回
+                </button>
+                <div class="text-right">
+                    <h1 class="text-xl font-serif font-bold text-stone-800">系统设置</h1>
                 </div>
-                
-                <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center mt-4">
+            </div>
+
+            <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.0</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.1</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -1222,6 +1263,7 @@ window.submitReply = function() {
 };
 
 window.goToRepliedList = function() {
+    if (typeof closeSidebar === 'function') closeSidebar(); // 点击后关闭侧边栏
     historyStack.push({...state});
     state.level = 'repliedList';
     render();
