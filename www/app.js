@@ -497,7 +497,8 @@ window.render = function() {
             `;
         } else {
             contentHtml = `
-                <div class="flex-1 p-6 pb-40 overflow-y-auto space-y-2" onkeyup="calculateWordCount()">
+                <!-- 🚨 加入了 journal-bg 恢复网格纸质感 -->
+                <div class="flex-1 p-6 pb-40 overflow-y-auto space-y-2 journal-bg" onkeyup="calculateWordCount()">
                     <div id="journal-canvas" class="space-y-2"></div>
                 </div>
             `;
@@ -633,13 +634,13 @@ window.render = function() {
             <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.1</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.2</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">更新日期</span>
-                        <span class="text-stone-400 text-sm font-mono">2026年5月1日</span>
+                        <span class="text-stone-400 text-sm font-mono">2026年5月2日</span>
                     </div>
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">核心开发者</span>
