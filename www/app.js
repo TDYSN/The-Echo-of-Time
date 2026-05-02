@@ -251,7 +251,13 @@ window.render = function() {
                 let tempDiv = document.createElement('div');
                 tempDiv.innerHTML = entry.html;
                 tempDiv.querySelectorAll('img, video, audio').forEach(el => el.remove());
+                
+                // 🚨 核心修复：将元素隐身挂载，逼迫浏览器进行排版计算得出真实的 \n
+                tempDiv.style.position = 'absolute';
+                tempDiv.style.opacity = '0';
+                document.body.appendChild(tempDiv);
                 let plainText = tempDiv.innerText.trim();
+                document.body.removeChild(tempDiv); // 提取完立刻无痕销毁
 
                 const entryD = new Date(entry.fullDateStr.replace(' ', 'T'));
                 const wd = ['周日','周一','周二','周三','周四','周五','周六'][entryD.getDay()];
@@ -267,7 +273,7 @@ window.render = function() {
                             <span>${dateDisplay}</span>
                         </div>
                         ${entry.title ? `<h3 class="text-lg font-bold text-stone-800 mb-2 tracking-wide">《${entry.title}》</h3>` : ''}
-                        <div class="text-sm text-stone-700 line-clamp-3 leading-relaxed indent-7 mb-3">${plainText}</div>
+                        <div class="text-sm text-stone-700 line-clamp-3 leading-relaxed mb-3 whitespace-pre-wrap break-words text-justify">${plainText}</div>
                         <div class="text-right text-[10px] text-stone-300 font-mono">${entry.timeStr}</div>
                         ${repliesHtml}
                     </div>
@@ -634,7 +640,7 @@ window.render = function() {
             <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.2</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.3</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -807,7 +813,15 @@ window.getArticlePlainText = function(id) {
     let tempDiv = document.createElement('div');
     tempDiv.innerHTML = entry.html;
     tempDiv.querySelectorAll('img, video, audio').forEach(el => el.remove());
-    return tempDiv.innerText.trim();
+    
+    // 同样隐身挂载提取真实换行
+    tempDiv.style.position = 'absolute';
+    tempDiv.style.opacity = '0';
+    document.body.appendChild(tempDiv);
+    let text = tempDiv.innerText.trim();
+    document.body.removeChild(tempDiv);
+    
+    return text;
 };
 
 window.copyArticle = function(id) {
@@ -871,6 +885,7 @@ window.saveCursorPosition = function() {
     if (sel.getRangeAt && sel.rangeCount) savedRange = sel.getRangeAt(0);
 };
 
+// 🌟 修复：文章模式最后一行无法插入图片的 Bug
 window.insertArticleImage = function(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -882,19 +897,47 @@ window.insertArticleImage = function(event) {
         
         const canvas = document.getElementById('article-canvas');
         canvas.focus();
+        
+        let insertSuccess = false;
+        
+        // 1. 尝试使用标准富文本命令插入 (适用于文章中间)
         if (savedRange) {
             const sel = window.getSelection();
             sel.removeAllRanges();
             sel.addRange(savedRange);
+            
+            const beforeLength = canvas.innerHTML.length;
+            document.execCommand('insertHTML', false, imgHtml);
+            
+            // 校验 WebView 是否发生了静默失败
+            if (canvas.innerHTML.length !== beforeLength) {
+                insertSuccess = true;
+            }
         }
-        document.execCommand('insertHTML', false, imgHtml);
+        
+        // 2. 🌟 核心修复兜底：如果是在最后一行、全空状态，或者 execCommand 失败
+        if (!insertSuccess) {
+            canvas.insertAdjacentHTML('beforeend', imgHtml);
+            
+            // 强制将光标移至文末，防止用户接下来打字找不到光标
+            const sel = window.getSelection();
+            const newRange = document.createRange();
+            newRange.selectNodeContents(canvas);
+            newRange.collapse(false); // false 意味着折叠到末尾
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+            savedRange = newRange; // 更新全局游标
+        }
+        
         if(!window.isEditorInitializing) isEditorDirty = true; 
         calculateWordCount(); 
+        
+        // 贴心小优化：插入图片后自动滚动到底部
+        canvas.scrollTop = canvas.scrollHeight;
     };
     reader.readAsDataURL(file); 
     event.target.value = '';
 };
-
 window.applyIndent = function() {
     const canvas = document.getElementById('article-canvas');
     canvas.focus();

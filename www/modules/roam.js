@@ -140,17 +140,22 @@ function renderRoamView() {
         const hasMedia = entry.html.includes('<img') || entry.html.includes('<video') || entry.html.includes('<audio');
         const bgClass = hasMedia ? 'journal-bg' : 'bg-[#faf9f6]';
         
+        // 🌟 新增：如果这是深度文章模式，把文章的标题优雅地展示出来
+        let titleHtml = entry.title ? `<h3 class="text-xl font-bold text-stone-800 mb-5 tracking-wide text-center">《${entry.title}》</h3>` : '';
+        
         return `
-            <div class="flex-shrink-0 w-full h-full flex items-center justify-center">
-                <!-- 注入长按回信属性，保留双击跳转 -->
-                <div class="w-[90%] h-[80%] max-h-[75vh] shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-3xl overflow-hidden cursor-pointer flex flex-col bg-white"
+            <div class="flex-shrink-0 w-full h-full flex items-center justify-center p-4">
+                <!-- 🌟 修复：拿掉死板的 h-[80%]，换成 h-auto，加入 min-h-[30vh] 兜底，保留 max-h-[75vh] 限制最大高度 -->
+                <div class="w-[90%] sm:w-[85%] max-w-md h-auto min-h-[30vh] max-h-[75vh] shadow-[0_10px_40px_rgba(0,0,0,0.08)] rounded-3xl overflow-hidden cursor-pointer flex flex-col bg-white transition-all duration-300"
                      ontouchstart="startLongPress('${entry.id}')" 
                      ontouchend="cancelLongPress()" 
                      ontouchmove="cancelLongPress()" 
                      oncontextmenu="event.preventDefault(); openReplyModal('${entry.id}');"
                      ondblclick="goToDayFromRoam('${entry.year}', '${entry.month}', ${entry.day})">
                     
+                    <!-- 🌟 内部内容区自动撑开，但受限于外层的最大高度 -->
                     <div class="read-only-mode ${bgClass} p-6 sm:p-10 border-b border-stone-50 flex-1 overflow-y-auto">
+                        ${titleHtml}
                         ${entry.html}
                     </div>
                     
