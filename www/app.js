@@ -1,4 +1,9 @@
-// app.js - V4.3 纯净视图渲染层 (新增一键提速清洗引擎)
+// 引入本地 AI 引擎与专属向量存储库
+import AIEngine, { VectorStorage } from './core/ai.js';
+
+// 🌟 将 AI 引擎挂载到全局窗口，供各个非模块化的业务线 (如 archive.js) 随时调用
+window.AIEngine = AIEngine;
+window.VectorStorage = VectorStorage;
 
 window.state = { level: 'home', year: null, month: null, day: null, editingId: null, currentArticleId: null };
 window.editorMeta = { date: '', location: '', weather: '', wordCount: 0, isArticleMode: false, hasPromptedArticle: false, title: '', device: '' };
@@ -75,16 +80,35 @@ window.migrateOldBase64Data = async function() {
     }
 };
 
-// UI 交互辅助函数
-function toggleSidebar() { const sidebar = document.getElementById('sidebar'); sidebar.classList.contains('-translate-x-full') ? openSidebar() : closeSidebar(); }
-function openSidebar() {
+// UI 交互辅助函数 (修复了 ES Module 作用域丢失与 Tailwind 归位 Bug)
+window.toggleSidebar = function() { 
+    const sidebar = document.getElementById('sidebar'); 
+    sidebar.classList.contains('-translate-x-full') ? window.openSidebar() : window.closeSidebar(); 
+};
+
+window.openSidebar = function() {
     let totalDays = 0;
-    for(let y in db) { for(let m in db[y]) { totalDays += new Set(db[y][m].map(e => e.day)).size; } }
-    document.getElementById('statDays').innerText = totalDays;
-    document.getElementById('sidebar').classList.remove('-translate-x-full');
-    document.getElementById('sidebarOverlay').classList.remove('hidden');
-}
-function closeSidebar() { document.getElementById('sidebar').classList.add('-translate-x-full'); document.getElementById('sidebarOverlay').classList.add('hidden'); }
+    for(let y in window.db) { for(let m in window.db[y]) { totalDays += new Set(window.db[y][m].map(e => e.day)).size; } }
+    const statDaysEl = document.getElementById('statDays');
+    if (statDaysEl) statDaysEl.innerText = totalDays;
+    
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    
+    // 显式添加 translate-x-0 强制重绘，解决部分机型卡死进不去的问题
+    sidebar.classList.remove('-translate-x-full');
+    sidebar.classList.add('translate-x-0');
+    overlay.classList.remove('hidden');
+};
+
+window.closeSidebar = function() { 
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    
+    sidebar.classList.add('-translate-x-full');
+    sidebar.classList.remove('translate-x-0');
+    overlay.classList.add('hidden');
+};
 
 // 修改 app.js 中的 openLocationModal 函数
 window.openLocationModal = function() { 
@@ -572,12 +596,12 @@ window.render = function() {
         } else {
             bottomBarsHtml = `
                 <div class="absolute bottom-0 left-0 w-full bg-[#faf9f6] border-t border-stone-200 p-3 flex justify-around items-center z-20 no-print text-stone-500">
-                     <!-- 🌟 加粗 (B) -->
-                    <button onclick="applyBold()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="加粗">
+                    <!-- 🌟 黑体 (B) - 修复焦点丢失 -->
+                    <button id="btn-bold" onmousedown="event.preventDefault(); applyBold()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all rounded-lg" title="加粗">
                         <span class="w-6 h-6 flex items-center justify-center font-serif font-black text-lg">B</span>
                     </button>
-                    <!-- 🌟 斜体 (I) -->
-                    <button onclick="applyItalic()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="斜体">
+                    <!-- 🌟 斜体 (I) - 修复焦点丢失 -->
+                    <button id="btn-italic" onmousedown="event.preventDefault(); applyItalic()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all rounded-lg" title="斜体">
                         <span class="w-6 h-6 flex items-center justify-center font-serif italic text-xl font-bold">I</span>
                     </button>
                     <!-- 🌟 缩进 -->
@@ -695,13 +719,13 @@ window.render = function() {
             <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.4.1</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.5.0</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">更新日期</span>
-                        <span class="text-stone-400 text-sm font-mono">2026年5月2日</span>
+                        <span class="text-stone-400 text-sm font-mono">2026年5月3日</span>
                     </div>
                     <div class="w-full flex justify-between items-center py-3">
                         <span class="text-stone-500 font-medium">核心开发者</span>
@@ -1288,7 +1312,33 @@ window.saveJournal = function() {
     // 3. 持久化到磁盘
     if (typeof window.saveToLocal === 'function') window.saveToLocal();
     
-    // 4. 智能判断刷新视图
+    // 🌟 [AI 引擎植入点]：启动异步任务剥离纯文本并生成向量
+    // 利用 setTimeout 将沉重的模型计算推入宏任务队列，绝不阻塞接下来的 UI 渲染
+    setTimeout(async () => {
+        try {
+            // 剥离 HTML 标签，获取纯净文字
+            let tempDiv = document.createElement('div');
+            tempDiv.innerHTML = htmlContent;
+            tempDiv.querySelectorAll('img, video, audio').forEach(el => el.remove());
+            
+            // 隐身挂载以获取真实的换行符结构
+            tempDiv.style.position = 'absolute';
+            tempDiv.style.opacity = '0';
+            document.body.appendChild(tempDiv);
+            let rawText = tempDiv.innerText.trim();
+            document.body.removeChild(tempDiv);
+
+            // 将标题与正文合并，作为最终的语义锚点
+            let finalText = title ? `《${title}》\n${rawText}` : rawText;
+
+            // 静默呼叫底层向量存储库
+            VectorStorage.updateIndex(entryId, finalText);
+        } catch(e) {
+            console.error("[AI 后台] 向量任务异常:", e);
+        }
+    }, 50);
+
+    // 4. 智能判断刷新视图 (不受上方 AI 计算的阻塞)
     if (window.appMode === 'archive') {
         if (typeof renderArchiveApp === 'function') renderArchiveApp();
     } else {
@@ -1618,51 +1668,43 @@ window.applyOrderedList = function() {
     window.calculateWordCount();
 };
 
-// 🌟 插入项目符号 (•)
-window.applyUnorderedList = function() {
-    const canvas = document.getElementById('article-canvas');
-    canvas.focus();
-    // 恢复全局记录的光标位置
-    if (savedRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
-    }
-    // 调用原生富文本指令
-    document.execCommand('insertUnorderedList', false, null);
+// 🌟 自动化工具栏状态刷新
+window.updateEditorToolbarState = function() {
+    const isBold = document.queryCommandState('bold');
+    const isItalic = document.queryCommandState('italic');
     
-    if(!window.isEditorInitializing) window.isEditorDirty = true; 
-    window.saveCursorPosition();
-    window.calculateWordCount();
-};
-// 🌟 执行加粗
-window.applyBold = function() {
-    const canvas = document.getElementById('article-canvas');
-    canvas.focus();
-    if (savedRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
+    const btnBold = document.getElementById('btn-bold');
+    const btnItalic = document.getElementById('btn-italic');
+    
+    if (btnBold) {
+        btnBold.classList.toggle('text-cyan-600', isBold);
+        btnBold.classList.toggle('bg-cyan-50', isBold);
     }
-    document.execCommand('bold', false, null);
-    if(!window.isEditorInitializing) window.isEditorDirty = true; 
-    window.saveCursorPosition();
-    window.calculateWordCount();
+    if (btnItalic) {
+        btnItalic.classList.toggle('text-cyan-600', isItalic);
+        btnItalic.classList.toggle('bg-cyan-50', isItalic);
+    }
 };
 
-// 🌟 执行斜体
+// 🌟 重写保存光标函数，顺便刷新状态
+const oldSaveCursor = window.saveCursorPosition;
+window.saveCursorPosition = function() {
+    if (typeof oldSaveCursor === 'function') oldSaveCursor();
+    window.updateEditorToolbarState(); 
+};
+
+// 🌟 执行加粗 (极致精简，纯粹开关)
+window.applyBold = function() {
+    document.execCommand('bold', false, null);
+    if(!window.isEditorInitializing) window.isEditorDirty = true; 
+    window.updateEditorToolbarState();
+};
+
+// 🌟 执行斜体 (极致精简，纯粹开关)
 window.applyItalic = function() {
-    const canvas = document.getElementById('article-canvas');
-    canvas.focus();
-    if (savedRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
-    }
     document.execCommand('italic', false, null);
     if(!window.isEditorInitializing) window.isEditorDirty = true; 
-    window.saveCursorPosition();
-    window.calculateWordCount();
+    window.updateEditorToolbarState();
 };
 
 // 🌟 执行撤回 (Undo)
@@ -1675,3 +1717,8 @@ window.applyUndo = function() {
     window.saveCursorPosition();
     window.calculateWordCount();
 };
+
+// 🚀 核心引擎启动 (就是这里被误删了，绝对不能漏掉！)
+if (typeof window.initFileSystem === 'function') {
+    window.initFileSystem();
+}

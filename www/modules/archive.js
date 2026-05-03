@@ -19,8 +19,14 @@ window.openArchiveSearch = function(scope) {
     renderArchiveApp();
 };
 
-window.executeArchiveSearch = function(keyword) {
-    window.archiveState.searchKeyword = keyword; // 记录状态，保证返回时能记住
+// ==========================================
+// 🌟 核心引擎 1：双擎混合搜索引擎 (毫秒级文字检索 + 防抖 AI 语义增幅)
+// ==========================================
+// 定义一个全局计时器，用来拦截频繁的打字输入 (防抖)
+window.archiveSearchTimer = null;
+
+window.executeArchiveSearch = async function(keyword) {
+    window.archiveState.searchKeyword = keyword; 
     const resultsContainer = document.getElementById('archiveSearchResults');
     if (!resultsContainer) return;
     
@@ -30,48 +36,149 @@ window.executeArchiveSearch = function(keyword) {
         return;
     }
 
+    // ----------------------------------------------------
+    // 🚀 第一级火箭：极速传统文本匹配 (同步执行，毫秒级响应)
+    // ----------------------------------------------------
     const scope = window.archiveState.searchScope;
-    let results = [];
-    
-    // 智能划定搜索范围
+    let allEntries = [];
     const booksToSearch = scope === 'global' ? Object.values(window.archiveDb) : (window.archiveDb[scope] ? [window.archiveDb[scope]] : []);
-
+    
     booksToSearch.forEach(book => {
         if (!book || !book.chapters) return;
         Object.values(book.chapters).forEach(chapter => {
             if (!chapter.entries) return;
-            chapter.entries.forEach(entry => {
-                // 隐身解析剥离HTML，实现真正纯净的文本匹配
-                let tempDiv = document.createElement('div');
-                tempDiv.innerHTML = entry.html || '';
-                let plainText = tempDiv.innerText.toLowerCase();
-                let titleText = (entry.title || '').toLowerCase();
-
-                if (titleText.includes(keyword) || plainText.includes(keyword)) {
-                    results.push({ book, chapter, entry });
-                }
-            });
+            chapter.entries.forEach(entry => allEntries.push({ book, chapter, entry }));
         });
     });
 
-    if (results.length === 0) {
-        resultsContainer.innerHTML = `<div class="text-center text-stone-400 py-20 mt-10">未找到与“${keyword}”相关的内容</div>`;
+    // 瞬间捞出所有字面匹配的记录
+    let fastResults = allEntries.filter(item => {
+        let tempDiv = document.createElement('div');
+        tempDiv.innerHTML = item.entry.html || '';
+        let plainText = tempDiv.innerText.toLowerCase();
+        let titleText = (item.entry.title || '').toLowerCase();
+        return titleText.includes(keyword) || plainText.includes(keyword);
+    });
+
+    // 给原生匹配的结果打上特殊标记
+    fastResults.forEach(item => item.matchType = 'exact');
+
+    // 立即渲染第一批结果，不让用户干等！并在底部挂载 AI 加载动画
+    renderHybridResults(resultsContainer, fastResults, true);
+
+    // ----------------------------------------------------
+    // 🧠 第二级火箭：防抖拦截 + AI 语义深挖 (异步后台执行)
+    // ----------------------------------------------------
+    // 如果用户还在疯狂打字，就重置炸弹倒计时，绝不启动 AI
+    if (window.archiveSearchTimer) clearTimeout(window.archiveSearchTimer);
+
+    // 等用户停止敲键盘 600 毫秒后，再启动这颗耗算力的 AI 引擎
+    window.archiveSearchTimer = setTimeout(async () => {
+        if (!window.AIEngine || !window.VectorStorage) {
+            renderHybridResults(resultsContainer, fastResults, false);
+            return;
+        }
+
+        try {
+            // AI 开始降维打击
+            const queryVector = await window.AIEngine.getEmbedding(keyword);
+            const vectorIndex = await window.VectorStorage.loadVectorIndex();
+            
+            let aiResults = [];
+            for (let item of allEntries) {
+                const entryId = item.entry.id;
+                if (vectorIndex[entryId]) {
+                    let score = window.AIEngine.cosineSimilarity(queryVector, vectorIndex[entryId]);
+                    // 只有语义高度相似的才被揪出来
+                    if (score > 0.45) {
+                        item.score = score;
+                        item.matchType = 'semantic';
+                        aiResults.push(item);
+                    }
+                }
+            }
+
+            // 🌟 合并结果去重：优先保留精准匹配，补充 AI 联想结果
+            let mergedMap = new Map();
+            fastResults.forEach(item => mergedMap.set(item.entry.id, item));
+            
+            aiResults.forEach(item => {
+                // 如果字面上已经精准匹配到了，只顺便更新一下它的 AI 评分，不改变身份
+                if (mergedMap.has(item.entry.id)) {
+                    mergedMap.get(item.entry.id).score = item.score; 
+                } else {
+                    mergedMap.set(item.entry.id, item);
+                }
+            });
+
+            // 将 Map 转换为数组，并进行混合排序
+            // 排序逻辑：精准匹配排在最前面，剩下的按 AI 相似度从高到低排
+            let finalResults = Array.from(mergedMap.values());
+            finalResults.sort((a, b) => {
+                if (a.matchType === 'exact' && b.matchType !== 'exact') return -1;
+                if (b.matchType === 'exact' && a.matchType !== 'exact') return 1;
+                return (b.score || 0) - (a.score || 0);
+            });
+
+            // AI 计算完毕，替换掉加载动画，渲染最终完整列表！
+            renderHybridResults(resultsContainer, finalResults, false);
+
+        } catch (e) {
+            console.error("[AI 检索失败]", e);
+            renderHybridResults(resultsContainer, fastResults, false);
+        }
+    }, 600); // 👈 防抖黄金时间：600ms
+};
+
+// 🌟 独立的 UI 渲染剥离函数，保持代码整洁
+function renderHybridResults(container, results, isAILoading) {
+    let html = '';
+    
+    if (results.length === 0 && !isAILoading) {
+        container.innerHTML = `<div class="text-center text-stone-400 py-20 mt-10">未找到与“${window.archiveState.searchKeyword}”相关的记录</div>`;
         return;
     }
 
-    resultsContainer.innerHTML = results.map(res => `
-        <div class="bg-white px-5 py-4 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.04)] border border-stone-100 flex flex-col gap-2 mb-3 cursor-pointer active:scale-[0.98] transition-transform" 
-             onclick="openArchiveEntry('${res.entry.id}', '${res.book.id}', '${res.chapter.id}')">
-            <div class="flex items-center gap-2">
-                <span class="text-lg opacity-60">📄</span>
-                <h3 class="font-bold text-stone-700 text-[15px] truncate">${res.entry.title || '无标题记录'}</h3>
-            </div>
-            <div class="text-[10px] text-stone-400 font-bold tracking-widest bg-stone-50 inline-block px-2.5 py-1.5 rounded-full w-max">
-                《${res.book.title}》 - ${res.chapter.title}
-            </div>
-        </div>
-    `).join('');
-};
+    if (results.length > 0) {
+        html += results.map(res => {
+            // 智能标签展示：精准匹配还是语义匹配？
+            let badgeHtml = '';
+            let progressBar = '';
+
+            if (res.matchType === 'exact') {
+                badgeHtml = `<span class="text-[10px] font-mono text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 shadow-inner tracking-widest shrink-0">精准匹配</span>`;
+            } else if (res.score) {
+                badgeHtml = `<span class="text-[10px] font-mono text-indigo-500 font-bold bg-indigo-50 px-1.5 py-0.5 rounded shadow-inner tracking-widest shrink-0">${(res.score * 100).toFixed(0)}% 共鸣</span>`;
+                progressBar = `<div class="absolute bottom-0 left-0 h-[3px] bg-indigo-50 w-full"><div class="h-full bg-indigo-500 rounded-r-full transition-all" style="width: ${res.score * 100}%"></div></div>`;
+            }
+
+            return `
+            <div class="bg-white px-5 py-4 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.04)] border border-stone-100 flex flex-col gap-2 mb-3 cursor-pointer hover:border-indigo-300 hover:-translate-y-0.5 active:scale-[0.98] transition-all relative overflow-hidden group" 
+                 onclick="openArchiveEntry('${res.entry.id}', '${res.book.id}', '${res.chapter.id}')">
+                ${progressBar}
+                <div class="flex items-center gap-2 relative z-10">
+                    <span class="text-lg opacity-60 group-hover:scale-110 transition-transform shrink-0">📄</span>
+                    <h3 class="font-bold text-stone-700 text-[15px] truncate flex-1">${res.entry.title || '无标题记录'}</h3>
+                    ${badgeHtml}
+                </div>
+                <div class="text-[10px] text-stone-400 font-bold tracking-widest bg-stone-50 inline-block px-2.5 py-1.5 rounded-full w-max relative z-10">
+                    《${res.book.title}》 - ${res.chapter.title}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // 尾部追加 AI 思考动画
+    if (isAILoading) {
+        html += `
+        <div class="flex items-center justify-center py-6 gap-3 text-indigo-400 animate-pulse">
+            <svg class="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <span class="text-xs font-bold tracking-widest">AI 正在进行深层回响检索...</span>
+        </div>`;
+    }
+
+    container.innerHTML = html;
+}
 
 // ==========================================
 // 🌟 核心引擎 2：高质感自定义弹窗

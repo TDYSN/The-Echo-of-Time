@@ -61,3 +61,16 @@ audio::-webkit-media-controls-panel { background-color: #ecfeff; }
 #article-canvas i, #article-canvas em, .article-content i, .article-content em {
     font-style: italic !important;
 }
+
+#btn-bold.text-cyan-600, #btn-italic.text-cyan-600 {
+    transform: scale(1.1);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.05);
+}
+
+/* 确保抽屉的层级最高 */
+#side-drawer {
+    z-index: 100;
+}
+#drawer-overlay {
+    z-index: 90;
+}

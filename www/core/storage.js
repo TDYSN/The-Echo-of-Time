@@ -116,4 +116,4 @@ window.saveMediaToDisk = async function(base64Data, type) {
     }
 };
 
-initFileSystem();
+//initFileSystem();
