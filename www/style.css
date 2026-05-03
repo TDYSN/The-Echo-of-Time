@@ -31,3 +31,33 @@ audio::-webkit-media-controls-panel { background-color: #ecfeff; }
 .read-only-mode .voice-container { 
     max-width: 100% !important; 
 }
+/* 🌟 让 Tailwind 放过富文本的列表样式，恢复点与数字 */
+#article-canvas ul, .article-content ul {
+    list-style-type: disc !important;
+    padding-left: 1.5em !important;
+    margin-top: 0.5em !important;
+    margin-bottom: 0.5em !important;
+}
+
+#article-canvas ol, .article-content ol {
+    list-style-type: decimal !important;
+    padding-left: 1.5em !important;
+    margin-top: 0.5em !important;
+    margin-bottom: 0.5em !important;
+}
+
+/* 列表项的段落间距微微收紧，保证排版紧凑好看 */
+#article-canvas li, .article-content li {
+    margin-bottom: 0.3em;
+    line-height: 1.8;
+}
+
+/* 🌟 恢复富文本的原生加粗和斜体样式 */
+#article-canvas b, #article-canvas strong, .article-content b, .article-content strong {
+    font-weight: 800 !important; /* 让加粗更显眼 */
+    color: #44403c; /* 字体颜色微微加深，凸显重点 */
+}
+
+#article-canvas i, #article-canvas em, .article-content i, .article-content em {
+    font-style: italic !important;
+}

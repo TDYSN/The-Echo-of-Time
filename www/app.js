@@ -454,9 +454,12 @@ window.render = function() {
                             <input type="datetime-local" id="entryDate" value="${editorMeta.date}" onchange="updateMetaDate(this.value); updateDateDOM(); isEditorDirty = true;" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer z-10">
                         </div>
                     </div>
-                    <div class="flex items-center gap-4 text-stone-400">
-                        <button class="hover:text-stone-600 active:scale-90 transition-transform">
-                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M6 3a2 2 0 00-2 2v14a1 1 0 001.5.864l4.5-2.5 4.5 2.5A1 1 0 0016 19V5a2 2 0 00-2-2H6z" clip-rule="evenodd" /></svg>
+                  <div class="flex items-center gap-4 text-stone-400">
+                        <!-- 🌟 撤回 (Undo) 按钮 -->
+                        <button onclick="applyUndo()" class="hover:text-cyan-600 active:scale-90 transition-transform" title="撤回">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" />
+                            </svg>
                         </button>
                         <button class="hover:text-stone-600 active:scale-90 transition-transform">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" /></svg>
@@ -569,16 +572,31 @@ window.render = function() {
         } else {
             bottomBarsHtml = `
                 <div class="absolute bottom-0 left-0 w-full bg-[#faf9f6] border-t border-stone-200 p-3 flex justify-around items-center z-20 no-print text-stone-500">
+                     <!-- 🌟 加粗 (B) -->
+                    <button onclick="applyBold()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="加粗">
+                        <span class="w-6 h-6 flex items-center justify-center font-serif font-black text-lg">B</span>
+                    </button>
+                    <!-- 🌟 斜体 (I) -->
+                    <button onclick="applyItalic()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="斜体">
+                        <span class="w-6 h-6 flex items-center justify-center font-serif italic text-xl font-bold">I</span>
+                    </button>
+                    <!-- 🌟 缩进 -->
                     <button onclick="applyIndent()" class="p-2 active:scale-95 transition-transform" title="首行缩进">
                         <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M7.5 12h12m-12 5.25h12M3.75 12l2.25 2.25L3.75 16.5" />
                         </svg>
                     </button>
-                    <button onclick="alert('创建项目编号功能开发中...')" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="项目标题">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5l-3.9 19.5m-2.1-19.5l-3.9 19.5" /></svg>
+                    <!-- 🌟 数字编号 (1. 2. 3.) -->
+                    <button onclick="applyOrderedList()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="数字编号">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 6.75h11.25M9 12h11.25M9 17.25h11.25M4.5 6h1.5v2.25M4.5 12h1.5v2.25M4.5 17h1.5v2.25" />
+                        </svg>
                     </button>
-                    <button onclick="alert('列表编号排版开发中...')" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="无序列表">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.008v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.008v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.008v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                    <!-- 🌟 项目符号 (•) -->
+                    <button onclick="applyUnorderedList()" class="p-2 hover:text-cyan-600 active:scale-95 transition-all" title="项目符号">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.008v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.008v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.008v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+                        </svg>
                     </button>
                     <label class="p-2 hover:text-cyan-600 active:scale-95 transition-all cursor-pointer" title="插入图片">
                         <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
@@ -677,7 +695,7 @@ window.render = function() {
             <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.4.0</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.4.1</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -1181,25 +1199,41 @@ window.saveJournal = function() {
         const chapter = window.archiveDb[bId].chapters[cId];
         if (!chapter.entries) chapter.entries = [];
 
-        const newEntry = {
-            id: entryId,
-            title: title || "未命名记录", 
-            html: htmlContent,
-            wordCount: editorMeta.wordCount || 0,
-            time: Date.now(),
-            device: editorMeta.device
-        };
-
+        // 🌟 修复：如果是修改旧文章，保持原位置，且继承历史标题
         if (state.editingId) {
-            chapter.entries = chapter.entries.filter(x => x.id !== entryId);
+            let foundIndex = chapter.entries.findIndex(x => x.id === entryId);
+            if (foundIndex > -1) {
+                let oldEntry = chapter.entries[foundIndex];
+                chapter.entries[foundIndex] = {
+                    ...oldEntry, // 完美继承旧数据
+                    title: title || oldEntry.title || "未命名记录",
+                    html: htmlContent,
+                    wordCount: editorMeta.wordCount || oldEntry.wordCount || 0,
+                    device: editorMeta.device || oldEntry.device || 'Echo 客户端'
+                };
+            }
+        } else {
+            // 如果是全新的文章，才插入到最前面
+            const newEntry = {
+                id: entryId,
+                title: title || "未命名记录", 
+                html: htmlContent,
+                wordCount: editorMeta.wordCount || 0,
+                time: Date.now(),
+                device: editorMeta.device
+            };
+            chapter.entries.unshift(newEntry);
         }
-        chapter.entries.unshift(newEntry);
+
+        // 👇 🌟 核心修复：保存完归档后，把主引擎从“编辑器”状态里解救出来！防止串台！
+        window.state = window.historyStack.pop() || { level: 'home', year: null, month: null, day: null };
+        window.state.editingId = null;
 
         window.archiveState.level = 'chapter';
     } else {
         // --- B 轨道：时光流逝存储 ---
         
-        // 🌟 核心修复1：使用编辑器里的真实时间（用户可手改的时间），而不是死板的 current now
+        // 🌟 修复：使用编辑器里的真实时间
         const entryDate = new Date(editorMeta.date || new Date());
         const y = entryDate.getFullYear();
         const m = entryDate.getMonth() + 1;
@@ -1208,13 +1242,13 @@ window.saveJournal = function() {
         if (!db[y]) db[y] = {}; 
         if (!db[y][m]) db[y][m] = [];
         
-        // 🌟 核心修复2：如果是修改旧文章，必须把旧的属性（特别是回信 replies）继承过来！
+        // 🌟 修复：必须把旧的属性（特别是回信 replies）继承过来
         let oldEntry = {};
         if (state.editingId) {
             for(let yr in db) { 
                 for(let mo in db[yr]) { 
                     let found = db[yr][mo].find(x => x.id === entryId);
-                    if(found) oldEntry = {...found}; // 保留旧数据备份
+                    if(found) oldEntry = {...found}; 
                     db[yr][mo] = db[yr][mo].filter(x => x.id !== entryId); 
                 } 
             }
@@ -1222,26 +1256,27 @@ window.saveJournal = function() {
 
         const pad = n => String(n).padStart(2, '0');
         const timeStr = `${pad(entryDate.getHours())}:${pad(entryDate.getMinutes())}`;
-        const fullDateStr = `${y}-${pad(m)}-${pad(d)} ${timeStr}`;
+        // 🌟 修复：安全的日期格式，防止产生 NaN
+        const fullDateStr = `${y}-${pad(m)}-${pad(d)} ${timeStr}`; 
 
         const newTimeEntry = {
-            ...oldEntry, // 将旧的回信等数据放进来打底
+            ...oldEntry, // 旧数据打底
             id: entryId, 
             day: d, 
             html: htmlContent, 
             title: title,
             timeStr: timeStr,
-            fullDateStr: fullDateStr, // 🌟 核心修复3：必须存这个！否则阅读页会直接崩溃白屏！
+            fullDateStr: fullDateStr, 
             location: editorMeta.location, 
             weather: editorMeta.weather, 
             device: editorMeta.device,
-            isArticleMode: editorMeta.isArticleMode, // 🌟 核心修复4：标记这是文章！
+            isArticleMode: editorMeta.isArticleMode,
             wordCount: editorMeta.wordCount || 0
         };
 
         db[y][m].unshift(newTimeEntry);
         
-        // 🌟 核心修复5：同步更新当前全局路由的年月日，防止跳页后找不到数据！
+        // 🌟 修复：同步更新当前全局路由的年月日
         state.year = String(y);
         state.month = String(m);
         state.day = Number(d);
@@ -1564,4 +1599,79 @@ window.switchToArchiveMode = function() {
     } else {
         alert('万物归档模块尚未加载！');
     }
+};
+// 🌟 插入数字编号 (1. 2. 3.)
+window.applyOrderedList = function() {
+    const canvas = document.getElementById('article-canvas');
+    canvas.focus();
+    // 恢复全局记录的光标位置
+    if (savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+    }
+    // 调用原生富文本指令
+    document.execCommand('insertOrderedList', false, null);
+    
+    if(!window.isEditorInitializing) window.isEditorDirty = true; 
+    window.saveCursorPosition();
+    window.calculateWordCount();
+};
+
+// 🌟 插入项目符号 (•)
+window.applyUnorderedList = function() {
+    const canvas = document.getElementById('article-canvas');
+    canvas.focus();
+    // 恢复全局记录的光标位置
+    if (savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+    }
+    // 调用原生富文本指令
+    document.execCommand('insertUnorderedList', false, null);
+    
+    if(!window.isEditorInitializing) window.isEditorDirty = true; 
+    window.saveCursorPosition();
+    window.calculateWordCount();
+};
+// 🌟 执行加粗
+window.applyBold = function() {
+    const canvas = document.getElementById('article-canvas');
+    canvas.focus();
+    if (savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+    }
+    document.execCommand('bold', false, null);
+    if(!window.isEditorInitializing) window.isEditorDirty = true; 
+    window.saveCursorPosition();
+    window.calculateWordCount();
+};
+
+// 🌟 执行斜体
+window.applyItalic = function() {
+    const canvas = document.getElementById('article-canvas');
+    canvas.focus();
+    if (savedRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedRange);
+    }
+    document.execCommand('italic', false, null);
+    if(!window.isEditorInitializing) window.isEditorDirty = true; 
+    window.saveCursorPosition();
+    window.calculateWordCount();
+};
+
+// 🌟 执行撤回 (Undo)
+window.applyUndo = function() {
+    const canvas = document.getElementById('article-canvas');
+    if(canvas) canvas.focus();
+    // 浏览器原生的撤回神技
+    document.execCommand('undo', false, null);
+    if(!window.isEditorInitializing) window.isEditorDirty = true; 
+    window.saveCursorPosition();
+    window.calculateWordCount();
 };

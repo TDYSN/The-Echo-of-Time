@@ -464,6 +464,12 @@ window.renderArchiveApp = function() {
 // ==========================================
 window.switchToTimeMode = function() {
     window.appMode = 'time';
+    
+    // 👇 🌟 核心修复 2：终极防串台防御。只要切回时光书架，强制主引擎回到主页！
+    window.state.level = 'home';
+    window.state.editingId = null;
+    window.isEditorInitializing = false;
+    
     if (typeof render === 'function') render(); 
 };
 
