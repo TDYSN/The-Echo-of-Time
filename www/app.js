@@ -7,6 +7,7 @@ window.tempSelectedLoc = '';
 window.savedRange = null;
 window.isEditorDirty = false;
 window.isEditorInitializing = false; 
+window.appMode = 'time'; // 默认是时光流逝模式
 
 // ========================
 // 🌟 核心提速引擎：清洗历史 Base64 数据
@@ -148,16 +149,21 @@ window.render = function() {
         if (!years.includes(String(currentYear))) years.unshift(String(currentYear));
 
         let booksHtml = years.map(y => `
-            <div onclick="goToYear(${y})" class="book-spine ${y == currentYear ? 'bg-amber-700 border-amber-900' : 'bg-emerald-800 border-emerald-950'} h-48 rounded-r-lg shadow-xl border-l-8 p-4 text-white flex flex-col justify-between hover:-translate-y-2 transition-transform">
+            <div onclick="goToYear(${y})" class="book-spine ${y == currentYear ? 'bg-amber-700 border-amber-900' : 'bg-emerald-800 border-emerald-950'} h-48 rounded-r-lg shadow-xl border-l-8 p-4 text-white flex flex-col justify-between hover:-translate-y-2 transition-transform cursor-pointer">
                 <h2 class="text-3xl font-serif font-bold">${y}</h2>
                 <p class="text-xs opacity-70">${y == currentYear ? '手账本正在使用中' : '已封存'}</p>
             </div>`).join('');
 
         app.innerHTML = `
-            <div class="p-6 pb-32 h-full overflow-y-auto relative bg-[#f5f5f4]">
-                <button onclick="toggleSidebar()" class="absolute left-6 top-8 text-stone-500 hover:text-stone-800 transition-transform active:scale-90 z-20">
+            <div class="p-6 pt-16 pb-32 h-full overflow-y-auto relative bg-[#f5f5f4]">
+                <button onclick="toggleSidebar()" class="absolute left-6 top-4 text-stone-500 hover:text-stone-800 transition-transform active:scale-90 z-20">
                     <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
                 </button>
+                
+                <button onclick="switchToArchiveMode()" class="absolute right-6 top-5 flex items-center gap-1.5 text-stone-500 hover:text-stone-800 transition-all active:scale-95 z-20 bg-white/60 backdrop-blur-md px-4 py-1.5 rounded-full shadow-sm border border-white/50 text-xs font-bold tracking-widest">
+                    🗂️ 万物归档
+                </button>
+
                 <div class="text-center my-8">
                     <h1 class="text-4xl font-serif font-bold text-stone-800 tracking-wider">往事书架</h1>
                     <p class="text-[10px] text-stone-400 mt-2 tracking-widest uppercase">年份页面</p>
@@ -166,7 +172,7 @@ window.render = function() {
             </div>
             ${renderAddButton()}
         `;
-    } 
+    }
     else if (state.level === 'year') {
         const activeMonths = Object.keys(db[state.year]||{}).map(Number).sort((a,b) => b-a);
         let monthsHtml = activeMonths.length === 0 ? `<div class="col-span-3 text-center text-stone-400 py-10 mt-10">空空如也...</div>` : activeMonths.map(m => `
@@ -259,9 +265,15 @@ window.render = function() {
                 let plainText = tempDiv.innerText.trim();
                 document.body.removeChild(tempDiv); // 提取完立刻无痕销毁
 
-                const entryD = new Date(entry.fullDateStr.replace(' ', 'T'));
-                const wd = ['周日','周一','周二','周三','周四','周五','周六'][entryD.getDay()];
-                const dateDisplay = `${entryD.getMonth() + 1}月${entryD.getDate()}日 ${wd}`;
+                const safeDateStr = (entry.fullDateStr || '').replace(/年|月/g, '-').replace(/日/g, '');
+                const entryD = new Date(safeDateStr.replace(' ', 'T'));
+                let dateDisplay = '';
+                if (!isNaN(entryD.getTime())) {
+                    const wd = ['周日','周一','周二','周三','周四','周五','周六'][entryD.getDay()];
+                    dateDisplay = `${entryD.getMonth() + 1}月${entryD.getDate()}日 ${wd}`;
+                } else {
+                    dateDisplay = `${state.month}月${entry.day}日`; // 终极安全兜底
+                }
 
                 return `
                 <div class="mb-8 bg-white rounded-[10px] shadow-[0_2px_15px_-4px_rgba(0,0,0,0.08)] border border-stone-100 cursor-pointer overflow-hidden transition-all hover:shadow-md hover:-translate-y-1" 
@@ -327,7 +339,8 @@ window.render = function() {
         const entry = db[state.year][state.month].find(x => x.id === state.currentArticleId);
         if (!entry) return goBack('day');
         
-        const entryDate = new Date(entry.fullDateStr.replace(' ', 'T'));
+        const safeDateStr = entry.fullDateStr.replace(/年|月/g, '-').replace(/日/g, '');
+        const entryDate = new Date(safeDateStr.replace(' ', 'T'));
         const weekDays = ['周日','周一','周二','周三','周四','周五','周六'];
 
         // 🌟 新增：解析回信模块的 HTML (包含删除回信的粉色垃圾桶)
@@ -461,8 +474,41 @@ window.render = function() {
             `;
         }
 
-        let contentHtml = '';
+       let contentHtml = '';
         if (isArticle) {
+            // 🌟 核心修改：动态判断底部设置栏，归档模式只留字数，时光模式全保留
+            let metaFooterHtml = '';
+            if (window.appMode === 'archive') {
+                metaFooterHtml = `
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+                        <span id="articleWordCountDisplay">${editorMeta.wordCount} 字</span>
+                    </div>
+                `;
+            } else {
+                metaFooterHtml = `
+                    <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openWeatherModal()">
+                        <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-2.25l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
+                        <span id="articleWeatherDisplay">${editorMeta.weather || '(无天气信息)'}</span>
+                    </div>
+                    
+                    <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openLocationModal()">
+                        <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
+                        <span id="articleLocDisplay">${editorMeta.location || '(无位置信息)'}</span>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>
+                        <span>${editorMeta.device || 'Echo 客户端'}</span>
+                    </div>
+                    
+                    <div class="flex items-center gap-3">
+                        <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
+                        <span id="articleWordCountDisplay">${editorMeta.wordCount} 字</span>
+                    </div>
+                `;
+            }
+
             contentHtml = `
                 <div class="flex-1 overflow-y-auto bg-[#faf9f6] relative">
                     <div class="flex flex-col min-h-full p-6 pb-24">
@@ -477,26 +523,7 @@ window.render = function() {
                              oninput="calculateWordCount(); if(!window.isEditorInitializing) isEditorDirty = true;"></div>
                              
                         <div class="mt-auto pt-8 pb-4 flex flex-col gap-4 text-stone-400 text-[13px] font-medium tracking-wider select-none no-print border-t border-stone-100 flex-shrink-0">
-                            
-                            <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openWeatherModal()">
-                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-2.25l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
-                                <span id="articleWeatherDisplay">${editorMeta.weather || '(无天气信息)'}</span>
-                            </div>
-                            
-                            <div class="flex items-center gap-3 cursor-pointer hover:text-cyan-600 transition-colors" onclick="openLocationModal()">
-                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
-                                <span id="articleLocDisplay">${editorMeta.location || '(无位置信息)'}</span>
-                            </div>
-                            
-                            <div class="flex items-center gap-3">
-                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" /></svg>
-                                <span>${editorMeta.device || 'Echo 客户端'}</span>
-                            </div>
-                            
-                            <div class="flex items-center gap-3">
-                                <svg class="w-5 h-5 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.5 21l5.25-11.25L21 21m-9-3h7.5M3 5.621a48.474 48.474 0 016-.371m0 0c1.12 0 2.233.038 3.334.114M9 5.25V3m3.334 2.364C11.176 10.658 7.69 15.08 3 17.502m9.334-12.138c.896.061 1.785.147 2.666.257m-4.589 8.495a18.023 18.023 0 01-3.827-5.802" /></svg>
-                                <span id="articleWordCountDisplay">${editorMeta.wordCount} 字</span>
-                            </div>
+                            ${metaFooterHtml}
                         </div>
                     </div>
                 </div>
@@ -595,7 +622,17 @@ window.render = function() {
 
         if (state.editingId) {
             window.isEditorInitializing = true;
-            const entry = db[state.year][state.month].find(x => x.id === state.editingId);
+            
+            // 🌟 核心修复：根据当前模式，去正确的数据库捞取旧文章数据！
+            let entry = null;
+            if (window.appMode === 'archive') {
+                const b = window.archiveDb[window.state.archiveBookId];
+                const c = b.chapters[window.state.archiveChapterId];
+                entry = c.entries.find(x => x.id === state.editingId);
+            } else {
+                entry = db[state.year][state.month].find(x => x.id === state.editingId);
+            }
+
             if (isArticle) {
                 setTimeout(() => {
                     document.getElementById('article-canvas').innerHTML = entry.html;
@@ -640,7 +677,7 @@ window.render = function() {
             <div class="bg-white rounded-3xl shadow-sm border border-stone-100 p-8 flex flex-col items-center justify-center">
                     <div class="w-24 h-24 bg-cyan-50 rounded-full flex items-center justify-center text-5xl mb-4 shadow-inner">📚</div>
                     <h2 class="text-2xl font-serif font-bold text-stone-700 mb-2">往事书架</h2>
-                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.3.4</p>
+                    <p class="text-xs text-stone-400 mb-6 bg-stone-100 px-3 py-1 rounded-full">当前版本：v3.4.0</p>
                     
                     <div class="w-full border-t border-stone-100 my-4"></div>
                     
@@ -1044,11 +1081,40 @@ window.goToEditor = function(type = 'journal') {
     if (/android/i.test(navigator.userAgent)) devName = 'Android 设备';
     if (/ipad|iphone|ipod/i.test(navigator.userAgent)) devName = 'iOS 设备';
     
-    editorMeta = { date: formatDateTimeLocal(new Date()), location: '', weather: '', wordCount: 0, isArticleMode: type === 'article', hasPromptedArticle: type === 'article', title: '', device: devName };
-    historyStack.push({...state}); state.level = 'editor'; state.editingId = null; render(); 
+    // 🌟 核心判断：接收归档模式传过来的默认标题
+    let defaultTitle = '';
+    // 如果是归档模式传进来的标题，就使用它
+    if (window.appMode === 'archive' && window.archiveTempTitle) {
+        defaultTitle = window.archiveTempTitle;
+        window.archiveTempTitle = null; // 用完即焚
+    }
+
+    editorMeta = { 
+        date: formatDateTimeLocal(new Date()), 
+        location: '', 
+        weather: '', 
+        wordCount: 0, 
+        isArticleMode: type === 'article', 
+        hasPromptedArticle: type === 'article', 
+        title: defaultTitle, // 🌟 填入预设标题
+        device: devName 
+    };
+    
+    historyStack.push({...state}); 
+    state.level = 'editor'; 
+    render();
 };
 
-window.cancelEdit = function() { state = historyStack.pop() || { level: 'home', year: null, month: null, day: null }; render(); };
+window.cancelEdit = function() { 
+    state = historyStack.pop() || { level: 'home', year: null, month: null, day: null }; 
+    
+    // 退出编辑器时，同样需要智能分发渲染权！
+    if (window.appMode === 'archive') {
+        if (typeof renderArchiveApp === 'function') renderArchiveApp();
+    } else {
+        render(); 
+    }
+};
 
 // 🌟 V3.3.1 智能导航引擎：能识别时空穿越的返回
 window.goBack = function(target) {
@@ -1079,49 +1145,190 @@ window.goBack = function(target) {
 };
 
 window.saveJournal = function() {
+    // 1. 获取编辑器内容
     let htmlContent = '';
-
+    let title = '';
+    
     if (editorMeta.isArticleMode) {
-        const titleInput = document.getElementById('articleTitleInput');
-        editorMeta.title = titleInput ? titleInput.value.trim() : (editorMeta.title || '');
-        const canvas = document.getElementById('article-canvas');
-        htmlContent = canvas.innerHTML;
-        if (canvas.innerText.trim() === '' && !htmlContent.includes('<img')) return alert("总得写点什么再保存吧？");
+        title = document.getElementById('articleTitleInput')?.value.trim() || '';
+        htmlContent = document.getElementById('article-canvas').innerHTML;
     } else {
         const canvas = document.getElementById('journal-canvas');
         canvas.querySelectorAll('textarea').forEach(ta => {
-            const p = document.createElement('p'); p.className = `text-stone-700 text-base leading-relaxed whitespace-pre-wrap outline-none`; p.innerText = ta.value; ta.parentNode.replaceChild(p, ta);
+            const p = document.createElement('p');
+            p.className = `text-stone-700 text-base leading-relaxed whitespace-pre-wrap outline-none`;
+            p.innerText = ta.value;
+            ta.parentNode.replaceChild(p, ta);
         });
         htmlContent = canvas.innerHTML;
-        if (canvas.innerText.trim() === '' && !htmlContent.includes('<img') && !htmlContent.includes('<video') && !htmlContent.includes('<audio')) return alert("总得写点什么再保存吧？");
     }
 
-    if (!editorMeta.date) return alert("请输入确切的时间！");
-    calculateWordCount();
-
-    const selectedDate = new Date(editorMeta.date);
-    const y = selectedDate.getFullYear(), m = selectedDate.getMonth() + 1, d = selectedDate.getDate();
-    const pad = n => String(n).padStart(2, '0');
-    const timeStr = `${pad(selectedDate.getHours())}:${pad(selectedDate.getMinutes())}`;
-    const fullDateStr = `${y}-${pad(m)}-${pad(d)} ${timeStr}`;
-
-    if (!db[y]) db[y] = {}; if (!db[y][m]) db[y][m] = [];
-    const newId = state.editingId || 'e_' + Date.now();
-    
-    if (state.editingId) {
-        const oldY = state.year, oldM = state.month;
-        if (db[oldY] && db[oldY][oldM]) db[oldY][oldM] = db[oldY][oldM].filter(x => x.id !== state.editingId);
+    // 内容校验
+    if (!htmlContent.replace(/<[^>]+>/g, '').trim() && !htmlContent.includes('<img')) {
+        return alert("写点内容再回响吧～");
     }
 
-    db[y][m].unshift({ id: newId, day: d, timeStr: timeStr, fullDateStr: fullDateStr, location: editorMeta.location, weather: editorMeta.weather, wordCount: editorMeta.wordCount, isArticleMode: editorMeta.isArticleMode, title: editorMeta.title, device: editorMeta.device, html: htmlContent });
+    const entryId = state.editingId || 'e_' + Date.now();
+
+    // 2. 🌟 深度逻辑：分轨保存
+    if (window.appMode === 'archive') {
+        // --- A 轨道：归档存储 ---
+        const bId = window.state.archiveBookId;
+        const cId = window.state.archiveChapterId;
+
+        if (!bId || !cId || !window.archiveDb[bId]) return alert("保存失败：未找到归档目标");
+
+        const chapter = window.archiveDb[bId].chapters[cId];
+        if (!chapter.entries) chapter.entries = [];
+
+        const newEntry = {
+            id: entryId,
+            title: title || "未命名记录", 
+            html: htmlContent,
+            wordCount: editorMeta.wordCount || 0,
+            time: Date.now(),
+            device: editorMeta.device
+        };
+
+        if (state.editingId) {
+            chapter.entries = chapter.entries.filter(x => x.id !== entryId);
+        }
+        chapter.entries.unshift(newEntry);
+
+        window.archiveState.level = 'chapter';
+    } else {
+        // --- B 轨道：时光流逝存储 ---
+        
+        // 🌟 核心修复1：使用编辑器里的真实时间（用户可手改的时间），而不是死板的 current now
+        const entryDate = new Date(editorMeta.date || new Date());
+        const y = entryDate.getFullYear();
+        const m = entryDate.getMonth() + 1;
+        const d = entryDate.getDate();
+        
+        if (!db[y]) db[y] = {}; 
+        if (!db[y][m]) db[y][m] = [];
+        
+        // 🌟 核心修复2：如果是修改旧文章，必须把旧的属性（特别是回信 replies）继承过来！
+        let oldEntry = {};
+        if (state.editingId) {
+            for(let yr in db) { 
+                for(let mo in db[yr]) { 
+                    let found = db[yr][mo].find(x => x.id === entryId);
+                    if(found) oldEntry = {...found}; // 保留旧数据备份
+                    db[yr][mo] = db[yr][mo].filter(x => x.id !== entryId); 
+                } 
+            }
+        }
+
+        const pad = n => String(n).padStart(2, '0');
+        const timeStr = `${pad(entryDate.getHours())}:${pad(entryDate.getMinutes())}`;
+        const fullDateStr = `${y}-${pad(m)}-${pad(d)} ${timeStr}`;
+
+        const newTimeEntry = {
+            ...oldEntry, // 将旧的回信等数据放进来打底
+            id: entryId, 
+            day: d, 
+            html: htmlContent, 
+            title: title,
+            timeStr: timeStr,
+            fullDateStr: fullDateStr, // 🌟 核心修复3：必须存这个！否则阅读页会直接崩溃白屏！
+            location: editorMeta.location, 
+            weather: editorMeta.weather, 
+            device: editorMeta.device,
+            isArticleMode: editorMeta.isArticleMode, // 🌟 核心修复4：标记这是文章！
+            wordCount: editorMeta.wordCount || 0
+        };
+
+        db[y][m].unshift(newTimeEntry);
+        
+        // 🌟 核心修复5：同步更新当前全局路由的年月日，防止跳页后找不到数据！
+        state.year = String(y);
+        state.month = String(m);
+        state.day = Number(d);
+        
+        state.level = editorMeta.isArticleMode ? 'articleView' : 'day';
+        if (editorMeta.isArticleMode) state.currentArticleId = entryId;
+    }
+
+    // 3. 持久化到磁盘
+    if (typeof window.saveToLocal === 'function') window.saveToLocal();
     
-    if(typeof window.saveToLocal === 'function') window.saveToLocal();
-    
-    state.year = y; state.month = m; state.day = d; 
-    
-    if (editorMeta.isArticleMode) { state.level = 'articleView'; state.currentArticleId = newId; } else { state.level = 'day'; }
-    render();
+    // 4. 智能判断刷新视图
+    if (window.appMode === 'archive') {
+        if (typeof renderArchiveApp === 'function') renderArchiveApp();
+    } else {
+        render(); 
+    }
 };
+
+// 🌟 新增：归档轨道保存函数 (建议放在 saveJournal 下方)
+function saveToArchiveTrack(id, title, html) {
+    // 🌟 事实依据：你的 archive.js 使用的是 archiveState 变量
+    const bId = window.archiveState.bookId;
+    const cId = window.archiveState.chapterId;
+
+    if (!bId || !cId) {
+        console.error("保存失败：archiveState 丢失", window.archiveState);
+        return alert("错误：找不到归档目录");
+    }
+
+    const book = window.archiveDb[bId];
+    const chapter = book.chapters[cId];
+    
+    if (!chapter) return alert("错误：章节不存在");
+
+    // 🌟 事实依据：你的数据结构是 chapter.entries (数组)
+    if (!chapter.entries) chapter.entries = [];
+
+    const newContent = {
+        id: id,
+        title: title || chapter.title || '未命名归档',
+        html: html,
+        wordCount: editorMeta.wordCount,
+        updateTime: Date.now(),
+        device: editorMeta.device
+    };
+
+    // 如果是编辑旧文，先滤掉旧的
+    if (state.editingId) {
+        chapter.entries = chapter.entries.filter(x => x.id !== id);
+    }
+    
+    chapter.entries.unshift(newContent);
+    
+    // 保存后，自动返回归档的“列表目录”
+    state.level = 'archiveApp'; 
+    window.archiveState.level = 'chapter'; 
+}
+
+// 🌟 新增：时光轨道保存函数 (提取自你原来的代码)
+function saveToTimeTrack(id, title, html) {
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth() + 1, d = now.getDate();
+    
+    if (!db[y]) db[y] = {};
+    if (!db[y][m]) db[y][m] = [];
+
+    if (state.editingId) {
+        for(let yr in db) {
+            for(let mo in db[yr]) {
+                db[yr][mo] = db[yr][mo].filter(x => x.id !== id);
+            }
+        }
+    }
+
+    db[y][m].unshift({
+        id: id, day: d, html: html, title: title,
+        timeStr: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+        location: editorMeta.location,
+        weather: editorMeta.weather,
+        device: editorMeta.device
+    });
+
+    state.year = y; state.month = m; state.day = d;
+    state.level = editorMeta.isArticleMode ? 'articleView' : 'day';
+    if (editorMeta.isArticleMode) state.currentArticleId = id;
+}
 
 window.editEntry = function(id) {
     const entry = db[state.year][state.month].find(x => x.id === id);
@@ -1339,6 +1546,22 @@ window.deleteReply = function(year, month, entryId, replyId) {
     if (entry && entry.replies) {
         entry.replies = entry.replies.filter(r => r.id !== replyId);
         if (typeof window.saveToLocal === 'function') window.saveToLocal();
-        render(); // 无缝刷新页面，如果信全删光了，它会自动从信箱消失！
+    // 3. 持久化到磁盘
+    if (typeof window.saveToLocal === 'function') window.saveToLocal();
+    
+    // 🌟 核心修复：根据当前处于什么模式，调用对应的渲染引擎退出编辑器
+    if (window.appMode === 'archive') {
+        if (typeof renderArchiveApp === 'function') renderArchiveApp();
+    } else {
+        render(); 
+    }
+    };
+};
+window.switchToArchiveMode = function() {
+    window.appMode = 'archive';
+    if (typeof renderArchiveApp === 'function') {
+        renderArchiveApp(); 
+    } else {
+        alert('万物归档模块尚未加载！');
     }
 };

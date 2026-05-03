@@ -9,6 +9,64 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-stone-100 min-h-screen text-stone-800">
+        <!-- 🌟 全新沉浸式原生启动页 (震撼时空回响版) -->
+    <style>
+        /* 定义震撼视觉的动态关键帧 */
+        @keyframes ripple-echo {
+            0% { transform: scale(0.8); opacity: 0.5; }
+            100% { transform: scale(2.8); opacity: 0; }
+        }
+        @keyframes star-pulse {
+            0%, 100% { transform: scale(1); opacity: 0.85; }
+            50% { transform: scale(1.15); opacity: 1; filter: drop-shadow(0 0 12px rgba(168,162,158,0.5)); }
+        }
+        @keyframes ring-spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        @keyframes fade-in-up {
+            0% { opacity: 0; transform: translateY(12px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+    <div id="appSplashScreen" class="fixed inset-0 bg-[#faf9f6] z-[999] flex flex-col items-center justify-center transition-opacity duration-700">
+        
+        <!-- 核心震撼视觉组 -->
+        <div class="relative flex items-center justify-center w-32 h-32 mb-12 mt-[-5vh]">
+            <!-- 扩宽你的世界：两层无限外扩的涟漪 (空间共鸣) -->
+            <div class="absolute w-16 h-16 border-[1.5px] border-stone-300 rounded-full" style="animation: ripple-echo 3s cubic-bezier(0.1, 0, 0.3, 1) infinite;"></div>
+            <div class="absolute w-16 h-16 border border-stone-300 rounded-full" style="animation: ripple-echo 3s cubic-bezier(0.1, 0, 0.3, 1) infinite 1.5s;"></div>
+
+            <!-- 抓住你的时间：悬浮呼吸的核心星盘 -->
+            <div style="animation: star-pulse 3s ease-in-out infinite;">
+                <svg class="w-[88px] h-[88px] text-stone-400" viewBox="0 0 100 100" fill="none" stroke="currentColor">
+                    <!-- 极细的十字准星 (时间刻度锁定) -->
+                    <path d="M50 10v80M10 50h80" stroke-width="0.5" class="opacity-40"/>
+                    
+                    <!-- 缓慢旋转的双层星轨 (精密机械感) -->
+                    <circle cx="50" cy="50" r="28" stroke-width="1" stroke-dasharray="3 5" style="transform-origin: 50px 50px; animation: ring-spin 20s linear infinite;"/>
+                    <circle cx="50" cy="50" r="36" stroke-width="0.5" class="opacity-40" style="transform-origin: 50px 50px; animation: ring-spin 30s linear infinite reverse;"/>
+
+                    <!-- 耀眼的锐利芒星 (凝聚的韧性与思想) -->
+                    <path d="M50 22L54 46L78 50L54 54L50 78L46 54L22 50L46 46Z" fill="currentColor" stroke="none" class="opacity-90"/>
+                    
+                    <!-- 突破核心的空白高光点 -->
+                    <circle cx="50" cy="50" r="3" fill="#faf9f6" stroke="none" />
+                </svg>
+            </div>
+        </div>
+
+        <!-- Slogan：带电影感入场动画 -->
+        <h1 class="text-[14px] font-serif font-bold text-stone-600 tracking-[0.4em] pl-2 drop-shadow-sm" style="animation: fade-in-up 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;">
+            抓住你的时间，扩宽你的世界
+        </h1>
+        <!-- 微观副标题：增加 UI 的纵深感 -->
+        <p class="text-[8px] font-mono text-stone-400/80 tracking-[0.3em] mt-4" style="animation: fade-in-up 1.5s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;">
+            ECHO OF TIME AND SPACE
+        </p>
+    </div>
+
+
 
     <div id="loadingOverlay" class="hidden fixed inset-0 bg-white/80 backdrop-blur-sm z-[70] flex flex-col items-center justify-center">
         <div class="text-4xl animate-bounce mb-4">🖨️</div>
@@ -176,6 +234,7 @@
     <script src="modules/roam.js"></script>
     <script src="modules/gallery.js"></script>
     <script src="modules/calendar.js"></script>
+    <script src="modules/archive.js"></script>
     
     <!-- 3. 主引擎 (最后启动) -->
     <script src="app.js"></script>

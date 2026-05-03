@@ -26,13 +26,36 @@ window.initFileSystem = async function() {
             await saveToLocal(); 
             alert("欢迎来到，时间的回响"); 
         }
+
+        // 🌟 读取归档数据库 (原生环境)
+        try { 
+            const arcResult = await Filesystem.readFile({ path: 'EchoAppData/archive_db.json', directory: 'DATA', encoding: 'utf8' }); 
+            window.archiveDb = JSON.parse(arcResult.data); 
+        } catch (e) { 
+            let oldArc = localStorage.getItem('WangShiShuJia_Archive'); 
+            window.archiveDb = oldArc ? JSON.parse(oldArc) : {}; 
+        }
+
     } else { 
+        // 🌟 网页端兜底测试环境
         let oldData = localStorage.getItem('WangShiShuJia_DB'); 
         window.db = oldData ? JSON.parse(oldData) : {}; 
+        
+        // 【关键修复】网页端也要读取归档数据！否则PC测试一保存就瘫痪！
+        let oldArc = localStorage.getItem('WangShiShuJia_Archive'); 
+        window.archiveDb = oldArc ? JSON.parse(oldArc) : {}; 
     }
     
     if (typeof render === 'function') {
-        render();
+        render(); // 先把底层的主页数据画好
+        
+        // 🌟 新增：数据加载完成且主页渲染后，优雅地淡出并销毁启动页
+        const splash = document.getElementById('appSplashScreen');
+        if (splash) {
+            splash.style.opacity = '0'; // 触发渐隐动画
+            // 700ms 后彻底从 DOM 树拔除，不占用任何内存
+            setTimeout(() => splash.remove(), 700); 
+        }
     }
 };
 
@@ -41,9 +64,13 @@ window.saveToLocal = async function() {
         if (window.Capacitor && window.Capacitor.isNativePlatform()) {
             const Filesystem = Capacitor.Plugins.Filesystem;
             try { await Filesystem.mkdir({ path: 'EchoAppData', directory: 'DATA', recursive: true }); } catch (e) {}
+            // 存时光书架
             await Filesystem.writeFile({ path: 'EchoAppData/database.json', data: JSON.stringify(window.db), directory: 'DATA', encoding: 'utf8' });
+            // 🌟 新增：存归档书架
+            await Filesystem.writeFile({ path: 'EchoAppData/archive_db.json', data: JSON.stringify(window.archiveDb), directory: 'DATA', encoding: 'utf8' });
         } else {
             localStorage.setItem('WangShiShuJia_DB', JSON.stringify(window.db));
+            localStorage.setItem('WangShiShuJia_Archive', JSON.stringify(window.archiveDb)); // 网页端兜底
         }
     } catch (e) {
         console.error("保存失败", e);

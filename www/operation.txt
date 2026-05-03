@@ -41,6 +41,12 @@ rounded-full：完全变成正圆形（很多文艺 APP 喜欢用纯圆形，你
         │   ├── gallery.js    <-- 图库模块逻辑
         │   ├── calendar.js   <-- 日历模块逻辑
         │   ├── map.js        <-- 足迹地图逻辑
-        │   └── roam.js       <-- 漫游卡片滑动逻辑
-        │
+        │   ├── roam.js       <-- 漫游卡片滑动逻辑
+        │   └── archive.js    <-- 万物归档
         └── app.js            <-- 🧠 主引擎与状态路由 (控制页面切换和主渲染)
+
+
+
+新对话开启的背景补充：
+    我的开发工具：VS code,Android Studio
+    

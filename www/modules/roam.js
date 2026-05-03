@@ -15,7 +15,9 @@ let isHorizontalSwipe = false;
 
 // 🌟 时间转化引擎 (精确呈现几天前、几个月前、几年前)
 function getRelativeTime(dateStr) {
-    const entryDate = new Date(dateStr.replace(/-/g, '/'));
+    const safeStr = (dateStr || '').replace(/年|月/g, '-').replace(/日/g, '').replace(/-/g, '/');
+    const entryDate = new Date(safeStr);
+    if (isNaN(entryDate.getTime())) return "过去"; // 兜底
     const now = new Date();
     now.setHours(0, 0, 0, 0);
     entryDate.setHours(0, 0, 0, 0);
@@ -166,8 +168,9 @@ function renderRoamView() {
             document.body.removeChild(tempDiv);
 
             // 解析右下角的日期格式: 2025 / 11 / 27
-            const dDate = new Date((entry.fullDateStr || entry.timeStr).replace(/-/g, '/'));
-            const bottomDateStr = `${dDate.getFullYear()} / ${String(dDate.getMonth()+1).padStart(2, '0')} / ${String(dDate.getDate()).padStart(2, '0')}`;
+           const safeBottomStr = (entry.fullDateStr || entry.timeStr || '').replace(/年|月/g, '-').replace(/日/g, '').replace(/-/g, '/');
+           const dDate = new Date(safeBottomStr);
+           const bottomDateStr = isNaN(dDate.getTime()) ? '未知时间' : `${dDate.getFullYear()} / ${String(dDate.getMonth()+1).padStart(2, '0')} / ${String(dDate.getDate()).padStart(2, '0')}`;
 
             // 根据有没有封面图，智能切换字体的颜色
             let bgStyle = coverImage ? `background-image: url('${coverImage}'); background-size: cover; background-position: center;` : 'background-color: white;';
